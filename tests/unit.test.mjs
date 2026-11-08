@@ -96,3 +96,25 @@ test('投影（ランベルト正角円錐）往復と北の向き', () => {
   // 標準緯線の間は縮尺係数 < 1（約0.985）
   near(km, 111.2 * 0.985, 1.0, '緯度1度 ≒ 109.5km');
 });
+
+import { pickStep, formatGridLabel, edgeLabelPoint, GRID_STEPS } from '../js/grid.js';
+import { mgrsSquareLetters } from '../js/coords.js';
+
+test('グリッド：刻みの選択と縁ラベル', () => {
+  // 0.6 px/km → 1度 ≒ 67px → 2度刻み（134px）
+  assert.equal(pickStep(GRID_STEPS.DD, 111.2 * 0.6), 2);
+  // 20 px/km → 1分 ≒ 37px → DDM は 5分刻み（185px）より前の 2分刻み（74px）は 90px 未満なので 5分
+  near(pickStep(GRID_STEPS.DDM, 111.2 * 20) * 60, 5, 1e-9, 'DDM 5分');
+  assert.equal(pickStep(GRID_STEPS.MGRS, 0.6 / 1000), 100000);
+  assert.equal(pickStep(GRID_STEPS.MGRS, 20 / 1000), 10000);
+  assert.equal(formatGridLabel(36.5, true, 'DDM', 30 / 60), 'N36°30′');
+  assert.equal(formatGridLabel(139.5 + 0.5 / 60, false, 'DDM', 0.5 / 60), 'E139°30.5′');
+  assert.equal(formatGridLabel(36 + 15 / 3600, true, 'DMS', 15 / 3600), 'N36°00′15″');
+  assert.equal(formatGridLabel(36, true, 'DMS', 1), 'N36°');
+  assert.equal(formatGridLabel(139.25, false, 'DD', 0.05), '139.25°');
+  const rect = { l: 0, t: 50, r: 100, b: 100 };
+  assert.deepEqual(edgeLabelPoint([{ x: 40, y: 0 }, { x: 40, y: 200 }], rect, ['top', 'bottom', 'left', 'right']), { edge: 'top', x: 40, y: 50 });
+  assert.deepEqual(edgeLabelPoint([{ x: -10, y: 70 }, { x: 200, y: 70 }], rect, ['left', 'right', 'top', 'bottom']), { edge: 'left', x: 0, y: 70 });
+  assert.equal(edgeLabelPoint([{ x: 300, y: 0 }, { x: 300, y: 200 }], rect, ['top']), null);
+  assert.deepEqual(mgrsSquareLetters(54, 381622, 3950298), { col: 'U', row: 'E' });
+});

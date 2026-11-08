@@ -4,16 +4,15 @@ import { setStoreErrorHandler, requestPersistence, saveLater } from './store.js'
 import { createProjection } from './projection.js';
 import { createView, attachGestures } from './map-view.js';
 import { buildGeoLayer, applyGeoVisibility, drawOverlay, scaleBar, hitTest } from './map-render.js';
-import { bindUi, renderDataPanel, renderTopBar, renderInfo, renderSettings, showBanner } from './ui.js';
+import { bindUi, renderDataPanel, renderTopBar, renderInfo, renderSettings, renderCursor, showBanner } from './ui.js';
 import { setManualOwn } from './gps.js';
 
 const $ = (id) => document.getElementById(id);
 const DATA_FILES = ['land', 'airspace', 'airports', 'navaids', 'obstacles'];
-const TRACK_UP_OWN_Y = 0.68;        // Track-up では自機を画面の下寄りに置く
-
 let view;
 let lastHits = null;
 let drawPending = false;
+let gestureActive = false;          // 指・ボタン操作中は地図を回さない（指の下で地図が回るのを防ぐ）
 
 async function loadData() {
   const results = await Promise.all(DATA_FILES.map((name) => fetch(`data/${name}.json`).then((r) => {
@@ -41,16 +40,28 @@ function requestDraw() {
   });
 }
 
-/* ==== applyOrientation ==== 追従・North-up / Track-up を視点に反映 */
+/* ==== applyOrientation ==== ◎ON：自機を中央に固定し航跡（Track）を上に／OFF：North-up（画面中心で真北が上） */
 function applyOrientation() {
-  const s = state.settings;
+  if (gestureActive) return;
   const own = state.own;
-  const trackUp = s.mode === 'NAV' && s.orientation === 'track' && Number.isFinite(own.trk);
-  const ref = Number.isFinite(own.lat) && s.follow ? own : view.center();
+  const following = state.settings.follow && Number.isFinite(own.lat);
+  const ref = following ? own : view.center();
+  // 針路が分からない間（静止・手動位置）は North-up
+  const upBearing = following && Number.isFinite(own.trk) ? own.trk : 0;
   // 画面上の向きを測って、その分だけ回す（図法の子午線収束も自動で吸収）
-  const angle = view.screenAngle(ref.lat, ref.lon, trackUp ? own.trk : 0);
+  const angle = view.screenAngle(ref.lat, ref.lon, upBearing);
   if (Math.abs(angle) > 0.05) view.setRotation(view.rot - angle);
-  if (s.follow && Number.isFinite(own.lat)) view.centerOn(own.lat, own.lon, trackUp ? TRACK_UP_OWN_Y : 0.5);
+  if (following) view.centerOn(own.lat, own.lon);
+}
+
+/* ==== followAnchor ==== 追従中は自機の画面位置を拡大縮小の中心にする（追従が外れない） */
+function followAnchor() {
+  return state.settings.follow && Number.isFinite(state.own.lat) ? view.geoToScreen(state.own.lat, state.own.lon) : null;
+}
+
+/* ==== measureInsets ==== 上部バーの高さ（グリッドのラベルを隠さないため） */
+function measureInsets() {
+  view.insetTop = document.querySelector('.topbar').getBoundingClientRect().bottom;
 }
 
 function rememberView() {
@@ -72,7 +83,13 @@ function wireEvents() {
   view.onChange(() => { requestDraw(); rememberView(); });
   attachGestures($('map'), view, {
     onTap: handleTap,
-    onUserMove: () => { if (state.settings.follow) { state.settings.follow = false; renderTopBar(); } },
+    onUserMove: () => {
+      gestureActive = true;
+      if (state.settings.follow) { state.settings.follow = false; renderTopBar(); }
+    },
+    onGestureEnd: () => { if (gestureActive) { gestureActive = false; applyOrientation(); } },
+    onPoint: (sx, sy) => { state.cursor = view.screenToGeo(sx, sy); renderCursor(); },
+    zoomAnchor: followAnchor,
   });
   on('own', () => { applyOrientation(); renderDataPanel(); requestDraw(); });
   on('tick', () => { renderDataPanel(); requestDraw(); });
@@ -86,7 +103,7 @@ function wireEvents() {
     if (state.selection) renderInfo(lastHits);
     requestDraw();
   });
-  window.addEventListener('resize', () => view.resize());
+  window.addEventListener('resize', () => { measureInsets(); view.resize(); });
 }
 
 async function boot() {
@@ -100,6 +117,7 @@ async function boot() {
   const s = state.settings;
   const proj = createProjection();
   view = createView($('map'), proj);
+  measureInsets();
   view.resize();
   view.setScale(s.view.scale);
   view.centerOn(s.view.lat, s.view.lon);
@@ -112,7 +130,10 @@ async function boot() {
   buildGeoLayer($('geo'), proj, state.data);
   applyGeoVisibility($('geo'), s);
   bindUi({
-    zoom: (f) => view.zoomAt(f, view.width / 2, view.height / 2),
+    zoom: (f) => {
+      const a = followAnchor() || { x: view.width / 2, y: view.height / 2 };
+      view.zoomAt(f, a.x, a.y);
+    },
     center: () => view.center(),
     goTo: (p) => { state.settings.follow = false; view.centerOn(p.lat, p.lon); renderTopBar(); },
     redraw: requestDraw,

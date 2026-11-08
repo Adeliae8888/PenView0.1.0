@@ -104,10 +104,16 @@ body { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color
 /* ---- 地図の操作ボタン・縮尺 ---- */
 .map-ctrl { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 10; display: flex; flex-direction: column; gap: 10px; }
 .map-ctrl .btn { width: 52px; height: 52px; background: var(--panel); }
-.mode-tac .nav-only { display: none; }
 .scale { position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 28px); z-index: 5; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .scale-bar { height: 6px; border: 2px solid var(--muted); border-top: 0; }
 .credit { position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 8px); z-index: 5; font-size: 10px; color: #56657a; }
+.cursor-readout {
+  position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 50px); z-index: 9;
+  padding: 3px 8px; border-radius: 6px; background: rgba(10, 17, 27, 0.75); border: 1px solid var(--line);
+  font: 600 12px ui-monospace, Menlo, monospace; color: var(--warn); pointer-events: none;
+}
+.grid-line { fill: none; stroke: rgba(203, 213, 225, 0.22); stroke-width: 1; }
+#overlay .grid-lbl { font-size: 10px; fill: #cbd5e1; }
 .north-arrow { position: fixed; right: 18px; top: calc(env(safe-area-inset-top) + 70px); z-index: 10; width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--warn); color: var(--warn); display: grid; place-items: center; font-weight: 800; background: var(--panel); }
 
 /* ---- シート（地点情報・設定） ---- */
@@ -152,4 +158,5 @@ input[type="radio"], input[type="checkbox"] { width: 20px; height: 20px; accent-
   .sheet.open { transform: none; }
   .scale { bottom: calc(env(safe-area-inset-bottom) + 150px); }
   .credit { bottom: calc(env(safe-area-inset-bottom) + 132px); }
+  .cursor-readout { bottom: calc(env(safe-area-inset-bottom) + 172px); }
 }

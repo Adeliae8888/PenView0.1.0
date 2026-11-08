@@ -39,12 +39,33 @@ await page.click('#zoomIn'); await page.click('#zoomIn'); await page.click('#zoo
 await page.waitForTimeout(400);
 await page.screenshot({ path: `${outDir}/2_nav_sim_zoom.png` });
 
-// Track-up
-await page.click('#orientBtn');
-await page.waitForTimeout(1200);
-result.trackUpRot = await page.evaluate(() => document.getElementById('geo').getAttribute('transform').match(/rotate\(([-\d.]+)\)/)[1]);
-await page.screenshot({ path: `${outDir}/3_nav_trackup.png` });
-await page.click('#orientBtn');
+// ◎ON（既定）：自機が画面中央・航跡が上
+result.followHeadingUp = await page.evaluate(() => {
+  const own = document.querySelector('#overlay .own').getAttribute('transform');
+  const [x, y] = own.match(/translate\(([-\d.]+) ([-\d.]+)\)/).slice(1).map(Number);
+  const rot = Number(own.match(/rotate\(([-\d.]+)\)/)[1]);
+  return { ownX: Math.round(x), ownY: Math.round(y), symbolAngle: Math.round(rot), w: innerWidth, h: innerHeight };
+});
+await page.screenshot({ path: `${outDir}/3_follow_headingup.png` });
+
+// グリッド（DDM）＋カーソル座標
+await page.click('#gridBtn');
+await page.mouse.move(300, 200);
+await page.waitForTimeout(400);
+result.gridDdm = await page.evaluate(() => ({
+  lines: (document.querySelector('#overlay .grid-line')?.getAttribute('d').match(/M/g) || []).length,
+  labels: [...document.querySelectorAll('#overlay .grid-lbl')].map((t) => t.textContent).slice(0, 6),
+  cursor: document.getElementById('cursorReadout').textContent,
+}));
+await page.screenshot({ path: `${outDir}/3b_grid_ddm.png` });
+
+// ドラッグで◎OFF → North-up に戻る
+await page.mouse.move(600, 400); await page.mouse.down(); await page.mouse.move(500, 350, { steps: 5 }); await page.mouse.up();
+await page.waitForTimeout(600);
+result.afterDrag = await page.evaluate(() => ({
+  follow: document.getElementById('followBtn').classList.contains('active'),
+  northArrowHidden: document.getElementById('northArrow').classList.contains('hidden'),
+}));
 
 // 地図をタップ → 地点情報
 await page.mouse.click(420, 300);
@@ -60,10 +81,17 @@ await page.waitForTimeout(800);
 result.tac = await counts();
 await page.screenshot({ path: `${outDir}/5_tac.png` });
 
-// 座標形式の切替（MGRS）
+// 座標形式の切替（MGRS）→ UTM 方眼
 await page.click('#coordBtn'); await page.click('#coordBtn'); await page.click('#coordBtn');
-await page.waitForTimeout(300);
+await page.click('#zoomIn'); await page.click('#zoomIn'); await page.click('#zoomIn'); await page.click('#zoomIn');
+await page.mouse.move(400, 300);
+await page.waitForTimeout(500);
 result.coordBtn = await page.textContent('#coordBtn');
+result.gridMgrs = await page.evaluate(() => ({
+  labels: [...document.querySelectorAll('#overlay .grid-lbl')].map((t) => t.textContent).slice(0, 8),
+  cursor: document.getElementById('cursorReadout').textContent,
+}));
+await page.screenshot({ path: `${outDir}/5b_grid_mgrs.png` });
 
 // 設定の保存 → 再読込で残るか ＋ オフライン
 await page.waitForTimeout(1500);

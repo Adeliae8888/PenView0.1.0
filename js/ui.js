@@ -6,7 +6,7 @@ import { startGps, stopGps, isGpsOn, startSim, stopSim, isSimOn, updateSim, setM
 import { esc, fmtLimit } from './map-render.js';
 
 const $ = (id) => document.getElementById(id);
-const LAYER_LABELS = { land: '陸地', airspace: '空域', airports: '飛行場', navaids: 'NAVAID', obstacles: '障害物' };
+const LAYER_LABELS = { land: '陸地', airspace: '空域', airports: '飛行場', navaids: 'NAVAID', obstacles: '障害物', grid: 'グリッド' };
 const GPS_LABELS = { off: 'GPS OFF', acquiring: 'GPS 捕捉中', ok: 'GPS', lost: 'GPS LOST', denied: 'GPS 不可', sim: 'SIM' };
 
 export function showBanner(text) {
@@ -60,7 +60,16 @@ export function renderTopBar() {
   pill.dataset.status = state.gpsStatus;
   $('coordBtn').textContent = s.coordFormat;
   $('followBtn').classList.toggle('active', s.follow);
-  $('orientBtn').textContent = s.orientation === 'track' ? 'TRK↑' : 'N↑';
+  $('gridBtn').classList.toggle('active', !!s.layers.grid);
+  renderCursor();
+}
+
+/* ==== renderCursor ==== カーソル（マウス位置／最後のシングルタッチ）の座標を選択中の座標系で */
+export function renderCursor() {
+  const el = $('cursorReadout');
+  const c = state.cursor;
+  el.classList.toggle('hidden', !c);
+  if (c) el.textContent = `⌖ ${formatLatLon(c.lat, c.lon, state.settings.coordFormat)}`;
 }
 
 /* ==== renderInfo ==== タップした地点の情報（全座標形式・B/E・自機からの方位距離・空域） */
@@ -124,7 +133,7 @@ export function bindUi(actions) {
   $('zoomIn').addEventListener('click', () => actions.zoom(1.6));
   $('zoomOut').addEventListener('click', () => actions.zoom(1 / 1.6));
   $('followBtn').addEventListener('click', () => updateSettings({ follow: !state.settings.follow }));
-  $('orientBtn').addEventListener('click', () => updateSettings({ orientation: state.settings.orientation === 'track' ? 'north' : 'track' }));
+  $('gridBtn').addEventListener('click', () => updateSettings({ layers: { ...state.settings.layers, grid: !state.settings.layers.grid } }));
   bindInfoSheet(actions);
   bindSettingsSheet(actions);
 }

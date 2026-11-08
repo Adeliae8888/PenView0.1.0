@@ -14,10 +14,9 @@ const DEFAULT_SETTINGS = {
   varMode: 'auto',                   // 'auto'（国土地理院近似式）| 'manual'
   manualVar: -8,                     // E=正 / W=負
   bullseye: { lat: 36.3474, lon: 141.3743, name: 'BULL' },
-  orientation: 'north',              // 'north' | 'track'（NAV のみ）
-  follow: true,
+  follow: true,                      // ON＝自機を中央に固定して Heading(Track)-up、OFF＝North-up で自由に移動
   view: { lat: 36.3, lon: 139.5, scale: 0.6 },   // scale = px/km
-  layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true },
+  layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true, grid: false },
   airspaceClasses: Object.fromEntries(Object.keys(AIRSPACE_CLASSES).map((k) => [k, !['other', 'info', 'heli', 'glider'].includes(k)])),
   manualOwn: null,                   // GPS なしで手動設定した自機位置
 };
@@ -26,6 +25,7 @@ export const state = {
   settings: structuredClone(DEFAULT_SETTINGS),
   own: { lat: null, lon: null, trk: null, gs: null, alt: null, source: null, time: 0 },
   selection: null,                   // 地図でタップした点 {lat, lon}
+  cursor: null,                      // マウス位置／最後にシングルタッチした点 {lat, lon}
   gpsStatus: 'off',                  // off | acquiring | ok | lost | denied | sim
   data: { land: null, airspace: [], airports: [], navaids: [], obstacles: [] },
 };

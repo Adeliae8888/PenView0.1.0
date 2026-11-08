@@ -1,5 +1,6 @@
 /* ==== map-render.js ==== 地図の描画。陸地・空域は「世界座標の固定パス＋変換行列」、点記号と自機は「画面座標で毎回描画」 */
 import { destination, distanceNm, pointInRing } from './geo.js';
+import { drawGrid } from './grid.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // 縮尺（px/km）ごとの表示しきい値
@@ -141,6 +142,7 @@ export function drawOverlay(el, view, state, variation) {
   const tac = s.mode === 'TAC';
   const k = tac ? TAC_DECLUTTER : 1;
   el.innerHTML = [
+    s.layers.grid ? drawGrid(view, s.coordFormat, view.insetTop || 0) : '',
     drawObstacles(view, state.data.obstacles, s.layers.obstacles && !tac),
     drawAirports(view, state.data.airports, s.layers.airports, k),
     drawNavaids(view, state.data.navaids, s.layers.navaids, k),

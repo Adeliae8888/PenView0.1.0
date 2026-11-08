@@ -37,12 +37,13 @@
   <nav class="map-ctrl">
     <button type="button" id="zoomIn" class="btn round" aria-label="拡大">＋</button>
     <button type="button" id="zoomOut" class="btn round" aria-label="縮小">－</button>
-    <button type="button" id="followBtn" class="btn round" aria-label="自機に追従">◎</button>
-    <button type="button" id="orientBtn" class="btn round nav-only" aria-label="North-up / Track-up">N↑</button>
+    <button type="button" id="followBtn" class="btn round" aria-label="自機を中央に固定して Heading-up">◎</button>
+    <button type="button" id="gridBtn" class="btn round" aria-label="グリッド表示">#</button>
   </nav>
 
   <div class="scale"><div id="scaleBar" class="scale-bar"></div><span id="scaleLabel"></span></div>
   <div id="northArrow" class="north-arrow hidden">N</div>
+  <div id="cursorReadout" class="cursor-readout hidden" aria-label="カーソル位置の座標"></div>
   <div class="credit">© OpenAIP (CC BY-NC) · Natural Earth</div>
 
   <aside id="infoSheet" class="sheet info" aria-label="地点情報"></aside>

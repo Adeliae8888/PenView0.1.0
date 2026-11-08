@@ -5,7 +5,7 @@ const CACHE_NAME = `penview-${self.APP_VERSION}`;
 const APP_SHELL = [
   './', './index.html', './version.js', './manifest.webmanifest', './css/app.css',
   './js/main.js', './js/state.js', './js/store.js', './js/geo.js', './js/coords.js', './js/projection.js',
-  './js/map-view.js', './js/map-render.js', './js/gps.js', './js/ui.js',
+  './js/map-view.js', './js/map-render.js', './js/grid.js', './js/gps.js', './js/ui.js',
   './data/land.json', './data/airspace.json', './data/airports.json', './data/navaids.json', './data/obstacles.json',
   './icons/icon-192.png', './icons/icon-512.png',
 ];

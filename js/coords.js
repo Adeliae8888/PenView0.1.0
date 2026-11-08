@@ -113,13 +113,20 @@ export function utmToLatLon(zone, easting, northing, south) {
   return { lat: lat / RAD, lon: (zone - 1) * 6 - 180 + 3 + lon / RAD };
 }
 
+/* ==== mgrsSquareLetters ==== UTM 座標を含む 100km 四方の文字（列・行） */
+export function mgrsSquareLetters(zone, easting, northing) {
+  return {
+    col: COL_SETS[(zone - 1) % 3][Math.floor(easting / 100000) - 1] || '?',
+    row: ROW_LETTERS[(((Math.floor(northing / 100000) + (zone % 2 === 0 ? 5 : 0)) % 20) + 20) % 20],
+  };
+}
+
 /* ==== toMgrs ==== "54S UE 12345 67890"（precision=5 で 1m） */
 export function toMgrs(lat, lon, precision = 5) {
   if (lat < -80 || lat > 84) return 'MGRS範囲外';
   const { zone, easting, northing } = latLonToUtm(lat, lon);
   const band = BAND_LETTERS[Math.floor((lat + 80) / 8)];
-  const col = COL_SETS[(zone - 1) % 3][Math.floor(easting / 100000) - 1];
-  const row = ROW_LETTERS[(Math.floor(northing / 100000) + (zone % 2 === 0 ? 5 : 0)) % 20];
+  const { col, row } = mgrsSquareLetters(zone, easting, northing);
   const div = 10 ** (5 - precision);
   const e = String(Math.floor((easting % 100000) / div)).padStart(precision, '0');
   const n = String(Math.floor((northing % 100000) / div)).padStart(precision, '0');

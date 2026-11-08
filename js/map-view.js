@@ -75,8 +75,11 @@ export function createView(svg, proj) {
   return v;
 }
 
-/* ==== attachGestures ==== 1本指=移動、2本指=拡大縮小、ホイール=拡大縮小、短いタップ=選択 */
-export function attachGestures(svg, view, { onTap, onUserMove }) {
+/* ==== attachGestures ==== 1本指=移動、2本指=拡大縮小、ホイール=拡大縮小、短いタップ=選択
+ * onPoint：マウスの現在位置／シングルタッチした位置（カーソル座標表示用）。onGestureEnd：指・ボタンを離した
+ * zoomAnchor()：拡大縮小の中心を固定したいとき {x,y} を返す（追従中は自機）。onUserMove はドラッグ移動のときだけ */
+export function attachGestures(svg, view, { onTap, onUserMove, onPoint, onGestureEnd, zoomAnchor }) {
+  const local = (e) => { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   const pointers = new Map();
   let tapStart = null;
   let pinch = null;
@@ -85,12 +88,16 @@ export function attachGestures(svg, view, { onTap, onUserMove }) {
     svg.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     tapStart = pointers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
+    if (pointers.size === 1) { const p = local(e); onPoint?.(p.x, p.y); }
     if (pointers.size === 2) pinch = pinchInfo(pointers);
   });
 
   svg.addEventListener('pointermove', (e) => {
     const prev = pointers.get(e.pointerId);
-    if (!prev) return;
+    if (!prev) {
+      if (e.pointerType === 'mouse') { const p = local(e); onPoint?.(p.x, p.y); }
+      return;
+    }
     const cur = { x: e.clientX, y: e.clientY };
     pointers.set(e.pointerId, cur);
     if (tapStart && Math.hypot(cur.x - tapStart.x, cur.y - tapStart.y) > TAP_MOVE_PX) tapStart.moved = true;
@@ -100,10 +107,13 @@ export function attachGestures(svg, view, { onTap, onUserMove }) {
     } else if (pointers.size === 2 && pinch) {
       const next = pinchInfo(pointers);
       const r = svg.getBoundingClientRect();
-      view.zoomAt(next.dist / pinch.dist, next.x - r.left, next.y - r.top);
-      view.panBy(next.x - pinch.x, next.y - pinch.y);
+      const anchor = zoomAnchor?.();
+      if (anchor) view.zoomAt(next.dist / pinch.dist, anchor.x, anchor.y);
+      else {
+        view.zoomAt(next.dist / pinch.dist, next.x - r.left, next.y - r.top);
+        view.panBy(next.x - pinch.x, next.y - pinch.y);
+      }
       pinch = next;
-      onUserMove?.();
     }
   });
 
@@ -115,6 +125,7 @@ export function attachGestures(svg, view, { onTap, onUserMove }) {
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
     tapStart = null;
+    if (pointers.size === 0) onGestureEnd?.();
   };
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
@@ -122,8 +133,8 @@ export function attachGestures(svg, view, { onTap, onUserMove }) {
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
     const r = svg.getBoundingClientRect();
-    view.zoomAt(WHEEL_ZOOM ** -e.deltaY, e.clientX - r.left, e.clientY - r.top);
-    onUserMove?.();
+    const anchor = zoomAnchor?.() || { x: e.clientX - r.left, y: e.clientY - r.top };
+    view.zoomAt(WHEEL_ZOOM ** -e.deltaY, anchor.x, anchor.y);
   }, { passive: false });
 }
 
