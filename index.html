@@ -27,7 +27,9 @@
       <button type="button" data-mode="TAC" role="tab">TAC</button>
     </div>
     <button type="button" id="gpsPill" class="pill" title="GPS">GPS OFF</button>
+    <span id="clockPill" class="pill clock" title="時刻（TIME HACK 補正後）">--:--:--Z</span>
     <div class="spacer"></div>
+    <button type="button" id="routeBtn" class="btn">ROUTE</button>
     <button type="button" id="coordBtn" class="btn" title="座標形式">DDM</button>
     <button type="button" id="settingsBtn" class="btn" aria-label="設定">設定</button>
   </header>
@@ -46,7 +48,24 @@
   <div id="cursorReadout" class="cursor-readout hidden" aria-label="カーソル位置の座標"></div>
   <div class="credit">© OpenAIP (CC BY-NC) · Natural Earth</div>
 
+  <div id="directBar" class="direct-bar hidden" role="alert">
+    <span>DIRECT ▶ <b id="directName"></b></span>
+    <button type="button" id="directExec" class="btn primary">EXECUTE</button>
+    <button type="button" id="directCancel" class="btn">CANCEL</button>
+  </div>
+  <div id="fuelPrompt" class="fuel-prompt hidden"><button type="button" id="fuelPromptText" class="btn"></button><button type="button" id="fuelPromptClose" class="btn" aria-label="閉じる">×</button></div>
+  <div id="fuelAlert" class="fuel-alert hidden" role="alert"><b id="fuelAlertText"></b><button type="button" id="fuelAlertAck" class="btn">ACK</button></div>
+
   <aside id="infoSheet" class="sheet info" aria-label="地点情報"></aside>
+
+  <aside id="dataSheet" class="sheet wide" aria-label="ルート・ログ・機体">
+    <div class="sheet-head"><div class="tabs" role="tablist">
+      <button type="button" data-tab="route">ルート</button><button type="button" data-tab="log">ログ</button>
+      <button type="button" data-tab="aircraft">機体</button><button type="button" data-tab="points">ポイント</button><button type="button" data-tab="share">共有</button>
+    </div><button type="button" class="btn" data-close="dataSheet">閉じる</button></div>
+    <div id="tab-route" class="tab-body"></div><div id="tab-log" class="tab-body"></div><div id="tab-aircraft" class="tab-body"></div>
+    <div id="tab-points" class="tab-body"></div><div id="tab-share" class="tab-body"></div>
+  </aside>
 
   <aside id="settingsSheet" class="sheet settings" aria-label="設定">
     <div class="sheet-head"><h2>設定</h2><button type="button" class="btn" data-close="settingsSheet">閉じる</button></div>
@@ -84,6 +103,21 @@
         <label>手動値 <input id="manualVar" type="number" step="0.1" min="-30" max="30" placeholder="W=-8" /></label>
       </div>
       <p id="varStatus" class="muted"></p>
+    </section>
+
+    <section class="group">
+      <h3>時刻</h3>
+      <div class="row wrap">
+        <label><input type="radio" name="timeZone" value="Z" /> Zulu</label>
+        <label><input type="radio" name="timeZone" value="JST" /> JST</label>
+      </div>
+      <div class="row wrap">
+        <span class="muted">TIME HACK</span>
+        <button type="button" class="btn sm" data-hack="-10">−10s</button><button type="button" class="btn sm" data-hack="-1">−1s</button>
+        <button type="button" class="btn sm" data-hack="1">+1s</button><button type="button" class="btn sm" data-hack="10">+10s</button>
+        <button type="button" class="btn sm" data-hack="0">リセット</button>
+      </div>
+      <p id="hackStatus" class="muted"></p>
     </section>
 
     <section class="group">

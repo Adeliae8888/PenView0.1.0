@@ -103,16 +103,21 @@ for f in load('jp_asp.geojson'):
                 'g': [rnd(q) for q in simplify_keep([tuple(q[:2]) for q in ring], SIMPLIFY_DEG / 4)]})
 
 APT = {0: 'airport', 1: 'glider', 2: 'airfield', 3: 'intl', 4: 'heli-mil', 5: 'mil', 7: 'heli', 9: 'ifr'}
+def elev_ft(e):
+    return round(e.get('value', 0) * (3.28084 if e.get('unit', 0) == 0 else 1))
+
+# 標高は ft に統一
 apt = [{'id': f['properties']['_id'], 'n': f['properties']['name'], 'icao': f['properties'].get('icaoCode', ''),
-        't': APT.get(f['properties']['type'], 'other'), 'elev': f['properties']['elevation']['value'],
+        't': APT.get(f['properties']['type'], 'other'), 'elev': elev_ft(f['properties']['elevation']),
         'p': rnd(f['geometry']['coordinates'])} for f in load('jp_apt.geojson')]
 
 NAV = {0: 'DME', 1: 'TACAN', 2: 'NDB', 3: 'VOR', 4: 'VOR-DME', 5: 'VORTAC', 6: 'DVOR', 7: 'DVOR-DME', 8: 'DVORTAC'}
 nav = []
 for f in load('jp_nav.geojson'):
     p = f['properties']; fr = p.get('frequency') or {}
+    # dec：局の公表偏差（E=正/W=負）。ラジアルはこの値で磁方位⇔真方位を換算する
     nav.append({'id': p['_id'], 'n': p['name'], 'ident': p.get('identifier', ''), 't': NAV.get(p['type'], '?'),
-                'f': fr.get('value', ''), 'p': rnd(f['geometry']['coordinates'])})
+                'f': fr.get('value', ''), 'dec': p.get('magneticDeclination'), 'p': rnd(f['geometry']['coordinates'])})
 
 M_TO_FT = 3.28084
 obs = []

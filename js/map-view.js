@@ -6,6 +6,7 @@ const MIN_SCALE = 0.08;     // px/km（日本全域が入る程度）
 const MAX_SCALE = 60;       // px/km（約 1nm が 110px）
 const TAP_MOVE_PX = 8;
 const TAP_TIME_MS = 350;
+const LONG_PRESS_MS = 550;
 const WHEEL_ZOOM = 1.0015;
 
 export function createView(svg, proj) {
@@ -77,8 +78,11 @@ export function createView(svg, proj) {
 
 /* ==== attachGestures ==== 1本指=移動、2本指=拡大縮小、ホイール=拡大縮小、短いタップ=選択
  * onPoint：マウスの現在位置／シングルタッチした位置（カーソル座標表示用）。onGestureEnd：指・ボタンを離した
- * zoomAnchor()：拡大縮小の中心を固定したいとき {x,y} を返す（追従中は自機）。onUserMove はドラッグ移動のときだけ */
-export function attachGestures(svg, view, { onTap, onUserMove, onPoint, onGestureEnd, zoomAnchor }) {
+ * zoomAnchor()：拡大縮小の中心を固定したいとき {x,y} を返す（追従中は自機）。onUserMove はドラッグ移動のときだけ
+ * タッチ：シングルタップ＝onPoint のみ、長押し＝onLongPress。マウス：クリック＝onTap、右クリック＝onLongPress */
+export function attachGestures(svg, view, { onTap, onLongPress, onUserMove, onPoint, onGestureEnd, zoomAnchor }) {
+  let pressTimer = null;
+  const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
   const local = (e) => { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   const pointers = new Map();
   let tapStart = null;
@@ -88,7 +92,13 @@ export function attachGestures(svg, view, { onTap, onUserMove, onPoint, onGestur
     svg.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     tapStart = pointers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
-    if (pointers.size === 1) { const p = local(e); onPoint?.(p.x, p.y); }
+    if (pointers.size === 1) {
+      const p = local(e);
+      onPoint?.(p.x, p.y);
+      if (e.pointerType !== 'mouse') {
+        pressTimer = setTimeout(() => { pressTimer = null; tapStart = null; onLongPress?.(p.x, p.y); }, LONG_PRESS_MS);
+      }
+    } else cancelPress();
     if (pointers.size === 2) pinch = pinchInfo(pointers);
   });
 
@@ -100,7 +110,7 @@ export function attachGestures(svg, view, { onTap, onUserMove, onPoint, onGestur
     }
     const cur = { x: e.clientX, y: e.clientY };
     pointers.set(e.pointerId, cur);
-    if (tapStart && Math.hypot(cur.x - tapStart.x, cur.y - tapStart.y) > TAP_MOVE_PX) tapStart.moved = true;
+    if (tapStart && Math.hypot(cur.x - tapStart.x, cur.y - tapStart.y) > TAP_MOVE_PX) { tapStart.moved = true; cancelPress(); }
     if (pointers.size === 1 && (!tapStart || tapStart.moved)) {
       view.panBy(cur.x - prev.x, cur.y - prev.y);
       onUserMove?.();
@@ -119,7 +129,8 @@ export function attachGestures(svg, view, { onTap, onUserMove, onPoint, onGestur
 
   const end = (e) => {
     const r = svg.getBoundingClientRect();
-    if (tapStart && !tapStart.moved && pointers.size === 1 && performance.now() - tapStart.t < TAP_TIME_MS) {
+    cancelPress();
+    if (e.pointerType === 'mouse' && tapStart && !tapStart.moved && pointers.size === 1 && performance.now() - tapStart.t < TAP_TIME_MS) {
       onTap?.(e.clientX - r.left, e.clientY - r.top);
     }
     pointers.delete(e.pointerId);
@@ -129,11 +140,16 @@ export function attachGestures(svg, view, { onTap, onUserMove, onPoint, onGestur
   };
   svg.addEventListener('pointerup', end);
   svg.addEventListener('pointercancel', end);
+  attachWheelAndMenu(svg, view, local, { onLongPress, zoomAnchor });
+}
 
+/* ==== attachWheelAndMenu ==== PC：ホイールで拡大縮小、右クリックで地点オプション（タッチの長押しと同じ） */
+function attachWheelAndMenu(svg, view, local, { onLongPress, zoomAnchor }) {
+  svg.addEventListener('contextmenu', (e) => { e.preventDefault(); const p = local(e); onLongPress?.(p.x, p.y); });
   svg.addEventListener('wheel', (e) => {
     e.preventDefault();
-    const r = svg.getBoundingClientRect();
-    const anchor = zoomAnchor?.() || { x: e.clientX - r.left, y: e.clientY - r.top };
+    const p = local(e);
+    const anchor = zoomAnchor?.() || p;
     view.zoomAt(WHEEL_ZOOM ** -e.deltaY, anchor.x, anchor.y);
   }, { passive: false });
 }

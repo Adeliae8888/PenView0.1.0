@@ -1,0 +1,190 @@
+/* ==== ui-route.js ==== ルート編集（経路・代替経路・STPT 詳細）とフライトログ表 */
+import { state, emit, currentVariation } from './state.js';
+import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes } from './route.js';
+import { aircraftList } from './aircraft.js';
+import { resolvePoint, searchPoints } from './points.js';
+import { navContext, etaTable } from './nav.js';
+import { PHASES } from './flightplan.js';
+import { convertSpeed, nextSpeedUnit, formatSpeed } from './aero.js';
+import { gsiVariation, toMagnetic, formatBearing } from './geo.js';
+import { esc } from './map-render.js';
+import { formatClock, formatDuration } from './clock.js';
+
+const PHASE_LABELS = { auto: '自動', climb: '上昇', cruise: '巡航', descent: '降下' };
+const UNIT_LABEL = { TAS: 'KTAS', MACH: 'MACH', IAS: 'KIAS' };
+const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+const val = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : v);
+const lb = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString('en-US') : '---');
+let editing = null;               // 詳細を開いている STPT {list, i}
+let editingRouteId = null;
+
+export function editingRoute() {
+  return routes().find((r) => r.id === editingRouteId) || activeRoute() || routes()[0] || null;
+}
+
+function configOptions(route) {
+  const opts = ['<option value="">— 未選択 —</option>'];
+  aircraftList().forEach((ac) => ac.configs.forEach((c) => {
+    const v = `${ac.id}|${c.id}`;
+    const sel = route.configRef && `${route.configRef.aircraftId}|${route.configRef.configId}` === v ? 'selected' : '';
+    opts.push(`<option value="${esc(v)}" ${sel}>${esc(ac.name)} / ${esc(c.name)}</option>`);
+  }));
+  return opts.join('');
+}
+
+function routeFields(r) {
+  const f = (key, label, ph = '', type = 'number') => `<label>${label}<input type="${type}" data-rf="${key}" value="${esc(val(r[key]))}" placeholder="${esc(ph)}" /></label>`;
+  return `<div class="row wrap">${f('name', '名前', '', 'text')}
+      <label class="grow">機体/形態<select data-rf="configRef">${configOptions(r)}</select></label></div>
+    <div class="row wrap">${f('startFuel', '搭載燃料 lb', '形態の値')}${f('joker', 'JOKER lb')}${f('bingo', 'BINGO lb')}
+      ${f('plannedTakeoff', `計画離陸 ${state.settings.timeZone === 'JST' ? 'L' : 'Z'}`, 'HHMM', 'text')}${f('cruiseAlt', '既定高度 ft')}</div>
+    <div class="row wrap"><label>予報風 °T<input type="number" data-rf="windDir" value="${esc(val(r.wind?.dir))}" /></label>
+      <label>kt<input type="number" data-rf="windSpd" value="${esc(val(r.wind?.spd))}" /></label>${f('isaDev', 'ISA偏差 ℃')}</div>`;
+}
+
+function pointDetail(p, list, i) {
+  const spd = p.speed || { unit: 'TAS', value: null };
+  return `<tr class="pt-detail"><td colspan="6"><div class="row wrap">
+    <label>区間高度 ft<input type="number" data-pf="legAlt" data-list="${list}" data-i="${i}" value="${esc(val(p.legAlt))}" placeholder="到着高度" /></label>
+    <label>TOS<input type="text" data-pf="tos" data-list="${list}" data-i="${i}" value="${esc(val(p.tos))}" placeholder="HHMMSS" /></label>
+    <label>風 °T<input type="number" data-pf="windDir" data-list="${list}" data-i="${i}" value="${esc(val(p.wind?.dir))}" /></label>
+    <label>kt<input type="number" data-pf="windSpd" data-list="${list}" data-i="${i}" value="${esc(val(p.wind?.spd))}" /></label>
+    <label>飛行段階<select data-pf="phase" data-list="${list}" data-i="${i}">${PHASES.map((ph) => `<option value="${ph}" ${p.phase === ph ? 'selected' : ''}>${PHASE_LABELS[ph]}</option>`).join('')}</select></label>
+    <label>巡航速度<span class="spd"><input type="number" step="any" data-pf="speed" data-list="${list}" data-i="${i}" value="${esc(val(spd.value))}" placeholder="形態の値" /><button type="button" class="btn unit" data-punit data-list="${list}" data-i="${i}">${UNIT_LABEL[spd.unit]}</button></span></label>
+  </div>${p.def ? `<p class="muted">定義：${esc(p.def)}</p>` : ''}</td></tr>`;
+}
+
+function pointRows(r, list) {
+  const arr = r[list];
+  return arr.map((p, i) => {
+    const tag = list === 'alternate' ? (i === arr.length - 1 ? 'ALT' : `A${i + 1}`) : i === 0 ? 'DEP' : i === arr.length - 1 ? 'DST' : String(i);
+    const cls = [list === 'points' && i === r.activeIdx && r.id === activeRoute()?.id ? 'active' : '', p.skipped ? 'skip' : ''].join(' ');
+    const open = editing && editing.list === list && editing.i === i;
+    return `<tr class="${cls}"><td>${tag}</td><td><b>${esc(p.name)}</b></td>
+      <td><input type="number" class="alt" data-pf="alt" data-list="${list}" data-i="${i}" value="${esc(val(p.alt))}" /></td>
+      <td class="nowrap"><button type="button" class="btn sm" data-pact="detail" data-list="${list}" data-i="${i}">${open ? '▾' : '▸'}</button>
+      <button type="button" class="btn sm" data-pact="up" data-list="${list}" data-i="${i}">↑</button><button type="button" class="btn sm" data-pact="down" data-list="${list}" data-i="${i}">↓</button>
+      <button type="button" class="btn sm danger" data-pact="del" data-list="${list}" data-i="${i}">×</button></td></tr>${open ? pointDetail(p, list, i) : ''}`;
+  }).join('');
+}
+
+function addRow(list) {
+  return `<div class="row"><input type="text" class="grow" list="ptSuggest" data-add-input="${list}" placeholder="HUC / RJAH / HUC 270/25 / 座標" autocomplete="off" />
+    <input type="number" class="alt" data-add-alt="${list}" placeholder="高度" /><button type="button" class="btn primary" data-add="${list}">追加</button></div><p class="muted" data-add-status="${list}"></p>`;
+}
+
+/* ==== renderRouteTab ==== ルート編集タブ */
+export function renderRouteTab(el) {
+  const r = editingRoute();
+  const list = routes().map((x) => `<option value="${x.id}" ${x.id === r?.id ? 'selected' : ''}>${esc(x.name)}${x.id === activeRoute()?.id ? ' ★' : ''}</option>`).join('');
+  el.innerHTML = `<div class="row wrap"><select id="routeSel" class="grow">${list || '<option>ルートなし</option>'}</select>
+      <button type="button" class="btn" data-ract="new">新規</button>${r ? '<button type="button" class="btn" data-ract="dup">複製</button><button type="button" class="btn danger" data-ract="del">削除</button>' : ''}</div>
+    ${r ? `<div class="row"><button type="button" class="btn ${r.id === activeRoute()?.id ? 'active' : ''}" data-ract="activate">${r.id === activeRoute()?.id ? '★ アクティブ' : 'アクティブにする'}</button>
+      <button type="button" class="btn" data-ract="reset">飛行実績をリセット</button></div>
+    ${routeFields(r)}<h3>経路（DEP → STPT → DST）</h3><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
+    <h3>代替経路（DST → ALT）任意</h3><table class="pts">${pointRows(r, 'alternate')}</table>${addRow('alternate')}` : '<p class="muted">「新規」でルートを作成してください</p>'}
+    <datalist id="ptSuggest"></datalist>`;
+}
+
+function setRouteField(r, key, value) {
+  if (key === 'configRef') { const [aircraftId, configId] = value.split('|'); r.configRef = value ? { aircraftId, configId } : null; return; }
+  if (key === 'windDir' || key === 'windSpd') { r.wind = { dir: 0, spd: 0, ...r.wind, [key === 'windDir' ? 'dir' : 'spd']: num(value) || 0 }; return; }
+  r[key] = ['name', 'plannedTakeoff'].includes(key) ? value : num(value);
+}
+
+function setPointField(p, key, value) {
+  if (key === 'windDir' || key === 'windSpd') {
+    const w = { dir: 0, spd: 0, ...p.wind, [key === 'windDir' ? 'dir' : 'spd']: num(value) || 0 };
+    p.wind = w.spd > 0 ? w : null;
+  } else if (key === 'speed') p.speed = value === '' ? null : { unit: p.speed?.unit || 'TAS', value: Number(value) };
+  else p[key] = key === 'phase' || key === 'tos' ? value || null : num(value);
+}
+
+function handleAdd(r, list, root) {
+  const input = root.querySelector(`[data-add-input="${list}"]`);
+  const altIn = root.querySelector(`[data-add-alt="${list}"]`);
+  const status = root.querySelector(`[data-add-status="${list}"]`);
+  const p = resolvePoint(input.value, { bullseye: state.settings.bullseye, variation: currentVariation().value });
+  if (!p) { status.textContent = '地点を特定できません'; return; }
+  addPoint(r, { ...p, name: p.name || `STPT${r[list].length + 1}`, alt: altIn.value === '' ? undefined : Number(altIn.value) }, list);
+  emit('route');
+}
+
+/* ==== bindRouteTab ==== ルート編集の操作（イベント委譲） */
+export function bindRouteTab(el, rerender) {
+  el.addEventListener('change', (e) => {
+    const t = e.target;
+    const r = editingRoute();
+    if (t.id === 'routeSel') { editingRouteId = t.value; editing = null; rerender(); return; }
+    if (!r) return;
+    if (t.dataset.rf) setRouteField(r, t.dataset.rf, t.value);
+    else if (t.dataset.pf) setPointField(r[t.dataset.list][Number(t.dataset.i)], t.dataset.pf, t.value);
+    else return;
+    saveRoutes();
+    emit('route');
+  });
+  el.addEventListener('input', (e) => {
+    const list = e.target.dataset.addInput;
+    if (!list) return;
+    el.querySelector('#ptSuggest').innerHTML = searchPoints(e.target.value).map((p) => `<option value="${esc(p.name)}">${esc(p.label)}</option>`).join('');
+  });
+  el.addEventListener('click', (e) => {
+    const t = e.target.closest('button');
+    if (!t) return;
+    let r = editingRoute();
+    const act = t.dataset.ract;
+    if (act === 'new') { r = newRoute(); editingRouteId = r.id; }
+    if (act === 'dup' && r) editingRouteId = duplicateRoute(r).id;
+    if (act === 'del' && r && confirm(`${r.name} を削除しますか？`)) { removeRoute(r.id); editingRouteId = null; }
+    if (act === 'activate' && r) setActiveRoute(r.id);
+    if (act === 'reset' && r) resetFlight(r);
+    if (t.dataset.add && r) { handleAdd(r, t.dataset.add, el); return; }
+    if (t.dataset.pact && r) pointAction(r, t.dataset.pact, t.dataset.list, Number(t.dataset.i));
+    if (t.hasAttribute('data-punit') && r) togglePointUnit(r[t.dataset.list][Number(t.dataset.i)], r);
+    if (act || t.dataset.pact || t.hasAttribute('data-punit')) emit('route');
+  });
+}
+
+function pointAction(r, act, list, i) {
+  if (act === 'detail') editing = editing && editing.list === list && editing.i === i ? null : { list, i };
+  if (act === 'up' || act === 'down') { movePoint(r, i, act === 'up' ? -1 : 1, list); editing = null; }
+  if (act === 'del') { removePoint(r, i, list); editing = null; }
+}
+
+/* ==== togglePointUnit ==== 速度の単位をタップで切替（その STPT の高度・ISA偏差で換算） */
+function togglePointUnit(p, r) {
+  const cur = p.speed || { unit: 'TAS', value: null };
+  p.speed = Number.isFinite(cur.value) ? convertSpeed(cur, nextSpeedUnit(cur.unit), p.alt || 0, r.isaDev || 0) : { unit: nextSpeedUnit(cur.unit), value: null };
+  saveRoutes();
+}
+
+/* ==== renderLogTab ==== フライトログ表（計画・ETA・燃料・実績との差） */
+export function renderLogTab(el) {
+  const nav = navContext();
+  const { route: r, plan } = nav;
+  if (!r) { el.innerHTML = '<p class="muted">アクティブなルートがありません</p>'; return; }
+  if (!plan?.ok) { el.innerHTML = `<p class="warn">計算できません：${esc((plan?.missing || ['2点以上必要']).join(', '))}</p><p class="muted">機体タブで性能を登録し、ルートで機体/形態を選んでください。</p>`; return; }
+  const etas = etaTable(nav, state.own);
+  const checks = r.flight.checks || [];
+  const row = (l, alt = false) => {
+    const ref = alt ? r.alternate[l.toIndex] : r.points[l.fromIndex];
+    const v = (ref && gsiVariation(ref.lat, ref.lon)) ?? currentVariation().value;
+    const act = alt ? null : checks.filter((c) => c.idx === l.toIndex).at(-1);
+    const cruise = l.segs.find((s) => s.phase === 'cruise') || l.segs[0];
+    const phases = l.segs.map((s) => ({ climb: 'C', cruise: 'R', descent: 'D' }[s.phase])).join('');
+    const cls = alt ? 'alt' : l.toIndex < r.activeIdx ? 'flown' : l.toIndex === r.activeIdx ? 'active' : '';
+    return `<tr class="${cls}"><td>${esc(l.name)}${l.direct ? ' <small>DIR</small>' : ''}</td><td>${formatBearing(toMagnetic(l.course, v))}</td><td>${l.dist.toFixed(1)}</td>
+      <td>${Math.round(l.cruiseAlt ?? l.alt)}</td><td>${Math.round(cruise.tas)} <small>${phases}</small></td><td>${Math.round(l.gs)}</td><td>${formatDuration(l.time)}</td>
+      <td>${alt ? '' : formatClock(etas[l.toIndex], false)}</td><td>${lb(l.fuel)}</td><td>${lb(l.fuelRem)}</td>
+      <td>${act ? lb(act.fuel) : ''}</td><td class="${act && act.fuel < l.fuelRem ? 'neg' : ''}">${act ? `${act.fuel >= l.fuelRem ? '+' : ''}${lb(act.fuel - l.fuelRem)}` : ''}</td></tr>`;
+  };
+  const head = '<tr><th>STPT</th><th>MC°</th><th>NM</th><th>ALT</th><th>TAS</th><th>GS</th><th>ETE</th><th>ETA</th><th>使用</th><th>残</th><th>実績</th><th>差</th></tr>';
+  el.innerHTML = `<div class="log-wrap"><table class="log">${head}${plan.legs.map((l) => row(l)).join('')}
+      ${plan.altLegs.length ? `<tr class="sep"><td colspan="12">代替経路（復行 ${lb(nav.cfg.missedApproach)} lb 後）</td></tr>${plan.altLegs.map((l) => row(l, true)).join('')}` : ''}</table></div>
+    <table class="kv totals"><tr><th>搭載 / 離陸</th><td>${lb(plan.startFuel)} / ${lb(plan.takeoffFuel)} lb</td></tr>
+      <tr><th>目的地 到着 / 接地</th><td>${lb(plan.destArrival)} / <b>${lb(plan.destLanding)}</b> lb（${formatDuration(plan.time)}）</td></tr>
+      ${plan.altLegs.length ? `<tr><th>代替 接地</th><td><b class="${plan.altLanding < plan.reserve ? 'neg' : ''}">${lb(plan.altLanding)}</b> lb（予備 ${lb(plan.reserve)}）</td></tr>` : ''}
+      <tr><th>JOKER / BINGO</th><td>${lb(r.joker)} / ${lb(r.bingo)} lb</td></tr>
+      <tr><th>離陸</th><td>${r.flight.takeoffAt ? `実績 ${formatClock(r.flight.takeoffAt)}` : `計画 ${esc(r.plannedTakeoff || '未設定')}`}</td></tr></table>
+    <p class="muted">飛行段階 C=上昇 R=巡航 D=降下。上昇は区間の始め、降下は区間の終わりと仮定。速度 ${formatSpeed(nav.cfg.cruise.speed)}（巡航）。</p>`;
+}

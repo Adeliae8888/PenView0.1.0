@@ -1,5 +1,9 @@
 /* ==== ui.js ==== 画面部品：上部バー・データパネル（NAV/TAC）・地点情報・設定 */
-import { state, updateSettings, currentVariation, emit, AIRSPACE_CLASSES } from './state.js';
+import { state, updateSettings, currentVariation, emit, switchMode, AIRSPACE_CLASSES } from './state.js';
+import { navBlockHtml } from './ui-nav.js';
+import { activeRoute, newRoute, addPoint, setActiveRoute } from './route.js';
+import { addUserPoint } from './points.js';
+import { now, formatClock } from './clock.js';
 import { COORD_FORMATS, formatLatLon, formatBe, parseCoordinate } from './coords.js';
 import { bearingTrue, distanceNm, toMagnetic, formatBearing, formatVariation } from './geo.js';
 import { startGps, stopGps, isGpsOn, startSim, stopSim, isSimOn, updateSim, setManualOwn } from './gps.js';
@@ -34,6 +38,12 @@ export function renderDataPanel() {
   const own = state.own;
   const v = currentVariation().value;
   const el = $('dataPanel');
+  const navBlock = s.mode === 'NAV' ? navBlockHtml() : '';
+  if (navBlock) {
+    const trk = Number.isFinite(own.trk) ? `${formatBearing(toMagnetic(own.trk, v))}°` : '---°';
+    el.innerHTML = `${navBlock}<div class="dp-row small"><span><b>TRK</b>${trk}</span><span><b>GS</b>${fmtNum(own.gs)}</span><span><b>ALT</b>${fmtNum(own.alt)}</span></div>`;
+    return;
+  }
   if (!Number.isFinite(own.lat)) {
     el.innerHTML = '<div class="dp-empty">自機位置なし<br><small>設定 → GPS 受信開始 / 地図をタップして「自機をここに」</small></div>';
     return;
@@ -86,14 +96,24 @@ export function renderInfo(hits) {
     fromOwn = `<tr><th>自機から</th><td class="mono">${formatBearing(toMagnetic(bearingTrue(state.own, sel), v))}°M / ${d.toFixed(1)}nm / ETE ${fmtEte(d, state.own.gs)}</td></tr>`;
   }
   const list = (title, items) => (items.length ? `<h3>${title}</h3><ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
-  sheet.innerHTML = `<div class="sheet-head"><h2>選択地点</h2><button type="button" class="btn" data-close-info>閉じる</button></div>
+  sheet.innerHTML = `<div class="sheet-head"><h2>${esc(sel.name || '選択地点')}</h2><button type="button" class="btn" data-close-info>閉じる</button></div>
     <table class="kv">${coordRows}<tr><th>B/E</th><td class="mono">${esc(s.bullseye.name)} ${esc(formatBe(sel, s.bullseye, v))}</td></tr>${fromOwn}</table>
     ${list('近くの施設', (hits?.near || []).map((n) => n.label))}
     ${list('この地点の空域', hits?.airspaces || [])}
     <div class="row wrap actions">
+      <button type="button" class="btn primary" data-act="stpt">STPT 追加</button>
+      <button type="button" class="btn primary" data-act="direct">DIRECT</button>
+      <button type="button" class="btn" data-act="altn">代替経路に追加</button>
+    </div>
+    <div class="row wrap actions">
+      <input type="text" id="upNameInfo" placeholder="ポイント名" maxlength="12" value="${esc(sel.name || '')}" />
+      <button type="button" class="btn" data-act="upt">ユーザーポイント登録</button>
+    </div>
+    <div class="row wrap actions">
       <button type="button" class="btn" data-act="bull">ブルズアイに設定</button>
       <button type="button" class="btn" data-act="own">自機をここに</button>
-    </div>`;
+    </div>
+    <p id="infoStatus" class="muted"></p>`;
   sheet.classList.add('open');
 }
 
@@ -113,6 +133,8 @@ export function renderSettings() {
   const chip = (group, key, label, on) => `<label class="chip"><input type="checkbox" data-${group}="${key}" ${on ? 'checked' : ''}/>${esc(label)}</label>`;
   $('layerToggles').innerHTML = Object.entries(LAYER_LABELS).map(([k, l]) => chip('layer', k, l, s.layers[k])).join('');
   $('airspaceToggles').innerHTML = Object.entries(AIRSPACE_CLASSES).map(([k, l]) => chip('asclass', k, l, s.airspaceClasses[k])).join('');
+  document.querySelectorAll('input[name="timeZone"]').forEach((r) => { r.checked = r.value === (s.timeZone || 'Z'); });
+  $('hackStatus').textContent = `${formatClock(now())}（補正 ${((s.timeOffsetMs || 0) / 1000).toFixed(0)} 秒）`;
   $('aboutText').textContent = `${self.APP_NAME} ${self.APP_VERSION} · 空域等 OpenAIP（CC BY-NC 4.0, openaip.net）· 陸地 Natural Earth · 偏差 国土地理院 磁気図2020.0年値`;
 }
 
@@ -122,12 +144,12 @@ function coordCtx() {
 
 /* ==== bindUi ==== イベント結線。地図操作は main.js が渡す actions で行う */
 export function bindUi(actions) {
-  document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => updateSettings({ mode: b.dataset.mode })));
+  document.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => switchMode(b.dataset.mode)));
   $('coordBtn').addEventListener('click', () => {
     const i = COORD_FORMATS.indexOf(state.settings.coordFormat);
     updateSettings({ coordFormat: COORD_FORMATS[(i + 1) % COORD_FORMATS.length] });
   });
-  $('settingsBtn').addEventListener('click', () => { renderSettings(); $('settingsSheet').classList.add('open'); });
+  $('settingsBtn').addEventListener('click', () => { renderSettings(); $('dataSheet').classList.remove('open'); $('settingsSheet').classList.add('open'); });
   $('gpsPill').addEventListener('click', () => { renderSettings(); $('settingsSheet').classList.add('open'); });
   document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => $(b.dataset.close).classList.remove('open')));
   $('zoomIn').addEventListener('click', () => actions.zoom(1.6));
@@ -144,6 +166,7 @@ function bindInfoSheet(actions) {
     if (e.target.closest('[data-close-info]')) { state.selection = null; emit('selection'); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act || !sel) return;
+    if (['stpt', 'direct', 'altn', 'upt'].includes(act)) { pointOption(act, sel); return; }
     if (act === 'bull') updateSettings({ bullseye: { ...state.settings.bullseye, lat: sel.lat, lon: sel.lon } });
     if (act === 'own') { setManualOwn(sel.lat, sel.lon); updateSettings({ manualOwn: { lat: sel.lat, lon: sel.lon } }); }
     state.selection = null;
@@ -152,7 +175,38 @@ function bindInfoSheet(actions) {
   });
 }
 
+/* ==== pointOption ==== 地点カーソルのオプション：STPT 追加／DIRECT（実行待ちへ）／代替経路に追加／ユーザーポイント登録 */
+function pointOption(act, sel) {
+  const status = $('infoStatus');
+  const name = sel.name || '';
+  if (act === 'upt') {
+    const n = $('upNameInfo').value.trim();
+    if (!n) { status.textContent = 'ポイント名を入れてください'; return; }
+    addUserPoint({ name: n, lat: sel.lat, lon: sel.lon });
+  } else if (act === 'direct') {
+    if (!activeRoute()) { status.textContent = 'アクティブなルートがありません'; return; }
+    state.directArm = { name: name || `DIR${String(activeRoute().points.length).padStart(2, '0')}`, lat: sel.lat, lon: sel.lon, pointId: sel.pointId };
+  } else {
+    let r = activeRoute();
+    if (!r) { r = newRoute(); setActiveRoute(r.id); }
+    addPoint(r, { name: name || `STPT${r.points.length}`, lat: sel.lat, lon: sel.lon, elev: sel.elev, def: name }, act === 'altn' ? 'alternate' : 'points');
+  }
+  state.selection = null;
+  emit('selection');
+  emit('route');
+}
+
+function bindTimeSettings() {
+  document.querySelectorAll('input[name="timeZone"]').forEach((r) => r.addEventListener('change', () => { updateSettings({ timeZone: r.value }); renderSettings(); }));
+  document.querySelectorAll('[data-hack]').forEach((b) => b.addEventListener('click', () => {
+    const d = Number(b.dataset.hack);
+    updateSettings({ timeOffsetMs: d === 0 ? 0 : (state.settings.timeOffsetMs || 0) + d * 1000 });
+    renderSettings();
+  }));
+}
+
 function bindSettingsSheet(actions) {
+  bindTimeSettings();
   $('gpsToggle').addEventListener('click', () => { if (isGpsOn()) stopGps(); else startGps(); renderSettings(); });
   $('simToggle').addEventListener('click', () => {
     if (isSimOn()) { stopSim(); renderSettings(); return; }

@@ -136,8 +136,56 @@ function drawOwnship(view, own) {
   return `${predictor}<g class="own${stale}" transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)}) rotate(${angle.toFixed(1)})"><path d="M0-13L9 10 0 5-9 10Z"/></g>`;
 }
 
-/* ==== drawOverlay ==== 画面座標の記号層を丸ごと描き直す（毎フレーム最大1回） */
-export function drawOverlay(el, view, state, variation) {
+function lineD(view, pts) {
+  return pts.map((g, i) => { const p = view.geoToScreen(g.lat, g.lon); return `${i ? 'L' : 'M'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`; }).join('');
+}
+
+function stptMarker(view, p, label, cls) {
+  const s = view.geoToScreen(p.lat, p.lon);
+  if (!inView(s, view)) return '';
+  return `<g class="stpt ${cls}" transform="translate(${s.x.toFixed(1)} ${s.y.toFixed(1)})"><circle r="6"/><text x="9" y="-7">${esc(label)}</text></g>`;
+}
+
+/* ==== drawRoute ==== アクティブルート：通過済み（淡）、アクティブ区間（強調）、以降、代替経路（破線）、TOC、DIRECT 予告 */
+function drawRoute(view, nav) {
+  const r = nav?.route;
+  if (!r || !r.points.length) return '';
+  const pts = r.points;
+  const live = pts.map((p, i) => ({ ...p, i })).filter((p) => !p.skipped);
+  const ai = live.findIndex((p) => p.i === r.activeIdx);
+  const origin = r.flight?.directOrigin;
+  let out = '';
+  if (ai > 0) out += `<path class="route-flown" d="${lineD(view, live.slice(0, ai))}"/>`;
+  if (ai >= 0) out += `<path class="route-active" d="${lineD(view, [origin || live[ai - 1] || live[ai], live[ai]])}"/>`;
+  if (ai >= 0 && ai < live.length - 1) out += `<path class="route-line" d="${lineD(view, live.slice(ai))}"/>`;
+  if (r.alternate?.length) out += `<path class="route-alt" d="${lineD(view, [pts.at(-1), ...r.alternate])}"/>`;
+  (nav.plan?.toc || []).concat(nav.plan?.altToc || []).forEach((t) => {
+    const s = view.geoToScreen(t.lat, t.lon);
+    out += `<g class="toc" transform="translate(${s.x.toFixed(1)} ${s.y.toFixed(1)})"><path d="M-6 0H6"/><text x="0" y="-6" text-anchor="middle">TOC</text></g>`;
+  });
+  pts.forEach((p, i) => {
+    const label = i === 0 ? `DEP ${p.name}` : i === pts.length - 1 ? `DST ${p.name}` : `${i} ${p.name}`;
+    out += stptMarker(view, p, label, p.skipped ? 'skip' : i === r.activeIdx ? 'active' : '');
+  });
+  (r.alternate || []).forEach((p, i) => { out += stptMarker(view, p, i === r.alternate.length - 1 ? `ALT ${p.name}` : `A${i + 1} ${p.name}`, 'alt'); });
+  return out;
+}
+
+function drawDirectArm(view, arm, own) {
+  if (!arm || !Number.isFinite(own.lat)) return '';
+  return `<path class="direct-arm" d="${lineD(view, [own, arm])}"/>`;
+}
+
+function drawUserPoints(view, items) {
+  return items.map((u) => {
+    const s = view.geoToScreen(u.lat, u.lon);
+    if (!inView(s, view)) return '';
+    return `<g class="upt" transform="translate(${s.x.toFixed(1)} ${s.y.toFixed(1)})"><path d="M0-6L6 0 0 6-6 0Z"/><text x="8" y="4">${esc(u.name)}</text></g>`;
+  }).join('');
+}
+
+/* ==== drawOverlay ==== 画面座標の記号層を丸ごと描き直す（毎フレーム最大1回）。nav = {route, plan, userPoints} */
+export function drawOverlay(el, view, state, variation, nav = null) {
   const s = state.settings;
   const tac = s.mode === 'TAC';
   const k = tac ? TAC_DECLUTTER : 1;
@@ -147,6 +195,9 @@ export function drawOverlay(el, view, state, variation) {
     drawAirports(view, state.data.airports, s.layers.airports, k),
     drawNavaids(view, state.data.navaids, s.layers.navaids, k),
     drawBullseye(view, s.bullseye, variation, tac),
+    drawUserPoints(view, nav?.userPoints || []),
+    drawRoute(view, nav),
+    drawDirectArm(view, state.directArm, state.own),
     drawSelection(view, state.selection),
     drawOwnship(view, state.own),
   ].join('');
@@ -161,15 +212,22 @@ export function scaleBar(view) {
   return { nm: nice, px: (nice / nmPer100) * 100 };
 }
 
-/* ==== hitTest ==== タップ位置の近くの空港・NAVAID と、その点を含む空域 */
-export function hitTest(view, state, sx, sy, geo) {
+/* ==== hitTest ==== タップ位置の近くの地点（STPT・ユーザー・飛行場・NAVAID）と、その点を含む空域。near[0] にスナップする */
+export function hitTest(view, state, sx, sy, geo, nav = null) {
   const near = [];
+  const pickGeo = (items, kind, label, extra = () => ({})) => items.forEach((it) => {
+    const p = view.geoToScreen(it.lat, it.lon);
+    const d = Math.hypot(p.x - sx, p.y - sy);
+    if (d < 22) near.push({ kind, d: d - 5, label: label(it), name: it.name, lat: it.lat, lon: it.lon, ...extra(it) });
+  });
+  pickGeo(nav?.route?.points || [], 'stpt', (p) => `STPT ${p.name}`, (p) => ({ pointId: p.id }));
+  pickGeo(nav?.userPoints || [], 'user', (u) => `${u.name}（ユーザー）`);
   const pick = (items, kind, label) => items.forEach((it) => {
     const p = view.geoToScreen(it.p[1], it.p[0]);
     const d = Math.hypot(p.x - sx, p.y - sy);
-    if (d < 22) near.push({ kind, d, label: label(it), lat: it.p[1], lon: it.p[0] });
+    if (d < 22) near.push({ kind, d, label: label(it), name: kind === 'apt' ? (it.icao || it.n) : it.ident, lat: it.p[1], lon: it.p[0], elev: it.elev, dec: it.dec });
   });
-  if (state.settings.layers.airports) pick(state.data.airports, 'apt', (a) => `${a.icao ? `${a.icao} ` : ''}${a.n}（標高 ${a.elev}m）`);
+  if (state.settings.layers.airports) pick(state.data.airports, 'apt', (a) => `${a.icao ? `${a.icao} ` : ''}${a.n}（標高 ${a.elev}ft）`);
   if (state.settings.layers.navaids) pick(state.data.navaids, 'nav', (n) => `${n.ident} ${n.t} ${n.f}（${n.n}）`);
   near.sort((x, y) => x.d - y.d);
   return { near: near.slice(0, 3), airspaces: airspacesAt(state, geo) };

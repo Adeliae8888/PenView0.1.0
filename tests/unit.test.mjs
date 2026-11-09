@@ -118,3 +118,126 @@ test('グリッド：刻みの選択と縁ラベル', () => {
   assert.equal(edgeLabelPoint([{ x: 300, y: 0 }, { x: 300, y: 200 }], rect, ['top']), null);
   assert.deepEqual(mgrsSquareLetters(54, 381622, 3950298), { col: 'U', row: 'E' });
 });
+
+import { toTas, convertSpeed, windTriangle, pressureRatio } from '../js/aero.js';
+import { computeLeg, computePlan, estimateFuel, projectLanding, missingPerf } from '../js/flightplan.js';
+
+test('標準大気と速度換算（公表値と照合）', () => {
+  near(pressureRatio(40000), 0.18509, 0.0002, 'δ FL400');
+  near(toTas({ unit: 'IAS', value: 300 }, 0), 300, 0.01, '海面で IAS=TAS');
+  near(toTas({ unit: 'MACH', value: 0.8 }, 30000), 471.5, 0.5, 'FL300 M0.80 TAS');
+  assert.equal(convertSpeed({ unit: 'MACH', value: 0.8 }, 'IAS', 30000).value, 304);
+  assert.equal(convertSpeed({ unit: 'IAS', value: 250 }, 'MACH', 35000).value, 0.74);
+  near(toTas({ unit: 'IAS', value: 300 }, 10000), 345.4, 0.5, '10000ft 300KIAS');
+  near(toTas({ unit: 'MACH', value: 0.8 }, 30000, 10), 471.5 * Math.sqrt((228.71 + 10) / 228.71), 0.5, 'ISA+10');
+  const back = convertSpeed(convertSpeed({ unit: 'IAS', value: 350 }, 'MACH', 20000), 'IAS', 20000);
+  near(back.value, 350, 2, 'IAS→MACH→IAS');
+  assert.equal(windTriangle(90, 400, { dir: 270, spd: 50 }).gs, 450);
+  near(windTriangle(90, 400, { dir: 90, spd: 50 }).gs, 350, 1e-9, '向かい風');
+});
+
+const CFG = {
+  fuelCap: 10000, taxiTakeoff: 500, approachLanding: 600, missedApproach: 900, reserve: 1500,
+  climb: { speed: { unit: 'IAS', value: 350 }, roc: 6000, ff: 9000 },
+  cruise: { speed: { unit: 'MACH', value: 0.85 }, ff: 4000 },
+  descent: { speed: { unit: 'IAS', value: 300 }, rod: 4000, ff: 1500 },
+};
+const DEP = { name: 'RJAH', lat: 36.1811, lon: 140.415, alt: 105 };
+
+test('区間の計算：上昇→巡航、TOC、降下は区間の終わり、手動上書き', () => {
+  const a = { name: 'A', ...destination(DEP, 90, 100), alt: 25000 };
+  const leg = computeLeg(DEP, a, CFG);
+  assert.deepEqual(leg.segs.map((s) => s.phase), ['climb', 'cruise']);
+  near(leg.segs.reduce((s, x) => s + x.dist, 0), leg.dist, 1e-6, '区間距離の合計');
+  near(distanceNm(DEP, leg.toc), leg.segs[0].dist, 0.01, 'TOC は上昇距離の位置');
+  near(leg.segs[0].time * 60, (25000 - 105) / 6000, 1e-6, '上昇時間 = 高度差/上昇率');
+  near(leg.fuel, leg.segs[0].time * 9000 + leg.segs[1].time * 4000, 1e-6, '燃料 = Σ FF×時間');
+  const b = { name: 'B', ...destination(a, 90, 60), alt: 2000 };
+  const d = computeLeg(a, b, CFG);
+  assert.deepEqual(d.segs.map((s) => s.phase), ['cruise', 'descent']);
+  assert.equal(d.toc, null);
+  const forced = computeLeg(DEP, { ...a, phase: 'climb' }, CFG);
+  assert.deepEqual(forced.segs.map((s) => s.phase), ['climb']);
+  const shortClimb = computeLeg(DEP, { name: 'C', ...destination(DEP, 90, 10), alt: 25000 }, CFG);
+  assert.equal(shortClimb.warn.length, 1, '10nm では上昇が終わらない警告');
+  // 飛行場への1区間：区間高度まで上昇 → 巡航 → 到着標高まで降下
+  const altnLeg = computeLeg({ ...DEP, alt: 30 }, { name: 'ALTN', ...destination(DEP, 0, 150), alt: 312, legAlt: 20000 }, CFG);
+  assert.deepEqual(altnLeg.segs.map((s) => s.phase), ['climb', 'cruise', 'descent']);
+  assert.equal(altnLeg.cruiseAlt, 20000);
+  near(altnLeg.segs.reduce((s, x) => s + x.dist, 0), altnLeg.dist, 1e-6, '距離の合計');
+  const tooShort = computeLeg({ ...DEP, alt: 30 }, { name: 'X', ...destination(DEP, 0, 20), alt: 312, legAlt: 20000 }, CFG);
+  assert.equal(tooShort.warn[0], '区間が短く巡航高度に届きません');
+  near(tooShort.segs.reduce((s, x) => s + x.dist, 0), tooShort.dist, 1e-6, '縮めても距離は合う');
+  const head = computeLeg(DEP, { ...a, wind: { dir: 90, spd: 80 } }, CFG);
+  assert.ok(head.time > leg.time && head.fuel > leg.fuel, '向かい風で時間・燃料が増える');
+});
+
+test('ルート全体：目的地・代替飛行場の接地燃料、EST FUEL、見込み', () => {
+  const a = { name: 'A', ...destination(DEP, 90, 100), alt: 25000 };
+  const dest = { name: 'DEST', ...destination(a, 180, 120), alt: 100 };
+  const altn = { name: 'ALTN', ...destination(dest, 270, 80), alt: 50 };
+  const route = { points: [DEP, a, dest], alternate: [{ ...altn, alt: 50 }], activeIdx: 1, flight: {} };
+  assert.deepEqual(missingPerf(null), ['機体・形態が未選択']);
+  const plan = computePlan(route, CFG);
+  assert.ok(plan.ok);
+  assert.equal(plan.takeoffFuel, 9500);
+  const burned = plan.legs.reduce((s, l) => s + l.fuel, 0);
+  near(plan.destArrival, 9500 - burned, 1e-6, '目的地到着燃料');
+  near(plan.destLanding, plan.destArrival - 600, 1e-6, '目的地接地 = 到着 − 進入着陸');
+  const altBurn = plan.altLegs.reduce((s, l) => s + l.fuel, 0);
+  near(plan.altLanding, plan.destArrival - 900 - altBurn - 600, 1e-6, '代替接地 = 到着 − 復行 − 代替経路 − 進入着陸');
+  assert.equal(plan.toc.length, 1);
+  assert.equal(estimateFuel(plan, route, Date.now()), 10000, '離陸前は搭載燃料');
+  const t0 = Date.parse('2026-11-09T00:00:00Z');
+  route.flight = { takeoffAt: t0, checks: [{ idx: 1, fuel: 8000, at: t0 + 600000 }] };
+  const leg1 = plan.legs[0];
+  near(estimateFuel(plan, route, t0 + 600000 + 1800000), 8000 - (leg1.fuel / leg1.time) * 0.5, 1e-6, '最後のチェックから計画FFで減らす');
+  const proj = projectLanding(plan, route, DEP, 8000, CFG);
+  near(proj.dest, 8000 - burned - 600, 1e-6, '出発点にいれば全区間が残り');
+});
+
+import { setStoreErrorHandler } from '../js/store.js';
+import { setPointSources, resolvePoint } from '../js/points.js';
+import { newRoute, addPoint, executeDirect, autoSequence, stepActive, passedActive } from '../js/route.js';
+setStoreErrorHandler(() => {});   // node には IndexedDB が無い
+
+test('地点の定義：NAVAID のラジアルは局の公表偏差で換算', () => {
+  setPointSources({ navaids: [{ ident: 'HUC', n: 'HYAKURI', t: 'VORTAC', dec: -7.0, p: [140.4, 36.2] }], airports: [{ icao: 'RJAH', n: 'HYAKURI', elev: 105, p: [140.415, 36.1811] }] });
+  const r = resolvePoint('HUC 270/25');
+  near(distanceNm({ lat: 36.2, lon: 140.4 }, r), 25, 0.01, 'DME 25');
+  near(bearingTrue({ lat: 36.2, lon: 140.4 }, r), 263, 0.05, 'R270 は真方位 263（局偏差 7°W）');
+  assert.equal(r.name, 'HUC270025');
+  assert.equal(resolvePoint('rjah').elev, 105);
+  assert.ok(resolvePoint('N3611.0 E14024.9'));
+  assert.equal(resolvePoint('XXXX'), null);
+});
+
+test('ルート編集・自動送り・DIRECT', () => {
+  const r = newRoute('T');
+  const P = (name, lon) => ({ name, lat: 36, lon });
+  addPoint(r, { ...P('DEP', 140), elev: 100 });
+  addPoint(r, P('DST', 141.0));
+  addPoint(r, P('A', 140.2));
+  addPoint(r, P('B', 140.4));
+  addPoint(r, P('C', 140.6));
+  assert.deepEqual(r.points.map((p) => p.name), ['DEP', 'A', 'B', 'C', 'DST'], '目的地の手前に入る');
+  assert.equal(r.points[0].alt, 100);
+  assert.equal(r.activeIdx, 1);
+  assert.ok(!passedActive(r, { lat: 36, lon: 140.05 }));
+  assert.equal(autoSequence(r, { lat: 36.01, lon: 140.2 }), 1, '2nm 以内で送る');
+  assert.equal(r.activeIdx, 2);
+  assert.equal(autoSequence(r, { lat: 36.05, lon: 140.45 }), 2, '真横を過ぎたら送る');
+  // ルート内の DIRECT：C を飛ばして DST へ
+  executeDirect(r, { pointId: r.points[4].id }, { lat: 36.1, lon: 140.5 });
+  assert.equal(r.activeIdx, 4);
+  assert.ok(r.points[3].skipped && !r.points[4].skipped);
+  assert.deepEqual(r.flight.directOrigin, { lat: 36.1, lon: 140.5, name: 'DIR' });
+  assert.ok(!stepActive(r, 1), '目的地より先へは進めない');
+  stepActive(r, -1);
+  assert.equal(r.activeIdx, 2, '飛ばした点は▲▼で避ける');
+  // ルート外の DIRECT：アクティブの手前に挿入し、その後は元のルートへ
+  executeDirect(r, { name: 'XRAY', lat: 36.3, lon: 140.3 }, { lat: 36.2, lon: 140.2 });
+  assert.equal(r.points[2].name, 'XRAY');
+  assert.equal(r.activeIdx, 2);
+  assert.equal(r.points[3].name, 'B', '続きは元のルート');
+});

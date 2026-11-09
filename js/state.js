@@ -19,6 +19,9 @@ const DEFAULT_SETTINGS = {
   layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true, grid: false },
   airspaceClasses: Object.fromEntries(Object.keys(AIRSPACE_CLASSES).map((k) => [k, !['other', 'info', 'heli', 'glider'].includes(k)])),
   manualOwn: null,                   // GPS なしで手動設定した自機位置
+  layersByMode: null,                // { NAV: {layers, airspaceClasses}, TAC: {...} }。モード切替でレイヤー表示を入れ替える
+  timeZone: 'Z',                     // 'Z' | 'JST'
+  timeOffsetMs: 0,                   // TIME HACK の補正
 };
 
 export const state = {
@@ -26,6 +29,9 @@ export const state = {
   own: { lat: null, lon: null, trk: null, gs: null, alt: null, source: null, time: 0 },
   selection: null,                   // 地図でタップした点 {lat, lon}
   cursor: null,                      // マウス位置／最後にシングルタッチした点 {lat, lon}
+  directArm: null,                   // DIRECT 実行待ち {name, lat, lon, pointId?}
+  fuelPrompt: null,                  // 通過した STPT の燃料入力待ち {idx, name}
+  alert: null,                       // 'joker' | 'bingo'
   gpsStatus: 'off',                  // off | acquiring | ok | lost | denied | sim
   data: { land: null, airspace: [], airports: [], navaids: [], obstacles: [] },
 };
@@ -62,6 +68,20 @@ export function updateSettings(patch) {
   Object.assign(state.settings, patch);
   saveLater(SETTINGS_KEY, () => state.settings);
   emit('settings', patch);
+}
+
+/* ==== switchMode ==== 今のレイヤー表示を元のモードに保存し、新しいモードの記憶を読み込む */
+const TAC_DEFAULT_OFF = ['obstacles', 'navaids'];
+export function switchMode(mode) {
+  const s = state.settings;
+  if (mode === s.mode) return;
+  const byMode = s.layersByMode || {};
+  byMode[s.mode] = { layers: { ...s.layers }, airspaceClasses: { ...s.airspaceClasses } };
+  const next = byMode[mode] || {
+    layers: { ...s.layers, ...Object.fromEntries(TAC_DEFAULT_OFF.map((k) => [k, mode !== 'TAC' && s.layers[k]])) },
+    airspaceClasses: { ...s.airspaceClasses },
+  };
+  updateSettings({ mode, layersByMode: byMode, layers: { ...s.layers, ...next.layers }, airspaceClasses: { ...s.airspaceClasses, ...next.airspaceClasses } });
 }
 
 /* ==== currentVariation ==== 使用中の偏差（度, W=負）と出所 */
