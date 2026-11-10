@@ -16,12 +16,13 @@ const DEFAULT_SETTINGS = {
   bullseye: { lat: 36.3474, lon: 141.3743, name: 'BULL' },
   follow: true,                      // ON＝自機を中央に固定して Heading(Track)-up、OFF＝North-up で自由に移動
   view: { lat: 36.3, lon: 139.5, scale: 0.6 },   // scale = px/km
-  layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true, grid: false },
+  layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true, grid: false, procedures: true },
   airspaceClasses: Object.fromEntries(Object.keys(AIRSPACE_CLASSES).map((k) => [k, !['other', 'info', 'heli', 'glider'].includes(k)])),
   manualOwn: null,                   // GPS なしで手動設定した自機位置
   layersByMode: null,                // { NAV: {layers, airspaceClasses}, TAC: {...} }。モード切替でレイヤー表示を入れ替える
   timeZone: 'Z',                     // 'Z' | 'JST'
   timeOffsetMs: 0,                   // TIME HACK の補正
+  keepAwake: true,                   // 画面を消さない（Wake Lock）
 };
 
 export const state = {
@@ -71,7 +72,7 @@ export function updateSettings(patch) {
 }
 
 /* ==== switchMode ==== 今のレイヤー表示を元のモードに保存し、新しいモードの記憶を読み込む */
-const TAC_DEFAULT_OFF = ['obstacles', 'navaids'];
+const TAC_DEFAULT_OFF = ['obstacles', 'navaids', 'procedures'];
 export function switchMode(mode) {
   const s = state.settings;
   if (mode === s.mode) return;

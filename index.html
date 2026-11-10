@@ -63,10 +63,10 @@
   <aside id="dataSheet" class="sheet wide" aria-label="ルート・ログ・機体">
     <div class="sheet-head"><div class="tabs" role="tablist">
       <button type="button" data-tab="route">ルート</button><button type="button" data-tab="log">ログ</button>
-      <button type="button" data-tab="aircraft">機体</button><button type="button" data-tab="points">ポイント</button>
+      <button type="button" data-tab="aircraft">機体</button><button type="button" data-tab="points">ポイント</button><button type="button" data-tab="proc">手順</button>
     </div><button type="button" class="btn" data-close="dataSheet">閉じる</button></div>
     <div id="tab-route" class="tab-body"></div><div id="tab-log" class="tab-body"></div><div id="tab-aircraft" class="tab-body"></div>
-    <div id="tab-points" class="tab-body"></div>
+    <div id="tab-points" class="tab-body"></div><div id="tab-proc" class="tab-body"></div>
   </aside>
 
   <aside id="settingsSheet" class="sheet settings" aria-label="設定">
@@ -78,6 +78,7 @@
         <button type="button" id="gpsToggle" class="btn primary">GPS 受信開始</button>
         <span id="gpsDetail" class="muted"></span>
       </div>
+      <div class="row"><label><input type="checkbox" id="keepAwake" /> 画面を消さない（Wake Lock）</label><span id="wakeStatus" class="muted"></span></div>
       <div class="row wrap">
         <label>TRK°M <input id="simTrk" type="number" min="0" max="359" step="1" value="090" inputmode="numeric" /></label>
         <label>GS kt <input id="simGs" type="number" min="0" max="1200" step="10" value="420" inputmode="numeric" /></label>

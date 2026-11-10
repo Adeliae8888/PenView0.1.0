@@ -6,11 +6,12 @@ import { routes, mergeRoutes } from './route.js';
 import { aircraftList, mergeAircraft } from './aircraft.js';
 import { userPoints, setPointSources, saveUserPoints } from './points.js';
 import { now } from './clock.js';
+import { procedures, mergeProcedures } from './procedures.js';
 import { esc } from './map-render.js';
 
 const $ = (id) => document.getElementById(id);
 const IO_KINDS = [
-  ['routes', 'ルート'], ['aircraft', '機体（形態を含む）'], ['navdata', 'NAV データ'], ['userPoints', 'ユーザーポイント'], ['settings', '設定'], ['all', '全データ'],
+  ['routes', 'ルート'], ['aircraft', '機体（形態を含む）'], ['navdata', 'NAV データ'], ['userPoints', 'ユーザーポイント'], ['procedures', '手順（SID/STAR/APP）'], ['settings', '設定'], ['all', '全データ'],
 ];
 const fmtDate = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
 
@@ -53,7 +54,7 @@ export function bindNavDataSection() {
   $('preferOfficial').addEventListener('change', (e) => updateSettings({ preferOfficial: e.target.checked }));
 }
 
-/* ==== 書き出し・読込 ==== 形式：{ type:'penview-share', version:2, routes?, aircraft?, navdata?, userPoints?, settings? } */
+/* ==== 書き出し・読込 ==== 形式：{ type:'penview-share', version:2, routes?, aircraft?, navdata?, userPoints?, procedures?, settings? } */
 function collect(kind) {
   const all = kind === 'all';
   const data = { type: 'penview-share', version: 2, exportedAt: new Date().toISOString(), app: self.APP_VERSION };
@@ -61,6 +62,7 @@ function collect(kind) {
   if (all || kind === 'aircraft') data.aircraft = aircraftList();
   if (all || kind === 'navdata') data.navdata = exportNavData();
   if (all || kind === 'userPoints') data.userPoints = userPoints();
+  if (all || kind === 'procedures') data.procedures = procedures();
   if (all || kind === 'settings') data.settings = state.settings;
   return data;
 }
@@ -89,6 +91,7 @@ export async function applyImport(data, only = 'all') {
     saveUserPoints();
     done.push('ユーザーポイント');
   }
+  if (use('procedures')) { mergeProcedures(data.procedures); emit('proc'); done.push('手順'); }
   if (use('settings')) { updateSettings({ ...data.settings }); done.push('設定'); }
   if (!done.length) throw new Error('このファイルには選んだ項目が入っていません');
   return done;

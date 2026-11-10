@@ -270,8 +270,10 @@ table.log tr.sep td { color: var(--warn); text-align: left; padding-top: 10px; }
 .nd-line.nd-aip-direct.nd-tacan { stroke: #4ade80; stroke-width: 1.4; }
 .nd-line.nd-aip-oceanic { stroke: #67e8f9; stroke-width: 0.9; stroke-dasharray: 6 4; }
 .nd-line.nd-aip-other-area { stroke: #94a3b8; stroke-dasharray: 8 4; }
-.nd-sup-airspace, .nd-sup-uas { stroke: #fbbf24; fill: rgba(251, 191, 36, 0.08); stroke-width: 1.6; stroke-dasharray: 7 4; }
-.nd-notam-airspace { stroke: #f43f5e; fill: rgba(244, 63, 94, 0.1); stroke-width: 1.6; stroke-dasharray: 4 3; }
+/* 臨時空域：JSDF 訓練空域（#fb923c）と同じ扱いで、線の色だけ同系色の濃淡で変える（SUP＝明るい橙、NOTAM＝濃い橙） */
+.nd-sup-uas { stroke: #fbbf24; fill: rgba(251, 191, 36, 0.06); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.nd-sup-airspace { stroke: #fdba74; fill: rgba(253, 186, 116, 0.06); stroke-width: 1.5; }
+.nd-notam-airspace { stroke: #ea580c; fill: rgba(234, 88, 12, 0.07); stroke-width: 1.5; }
 .nd-obs-sup { stroke: #fbbf24; }
 .mode-tac .nd-line, .mode-tac .nd-aip-acc { opacity: 0.4; }
 .mode-tac .nd-area { opacity: 0.55; }
@@ -310,3 +312,26 @@ table.pts td.pick { cursor: pointer; }
 .legend { font-size: 12px; }
 .io-row { border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .zoom-wide .nd-line.nd-aip-rnav, .zoom-wide .nd-line.nd-aip-ats, .zoom-wide .nd-line.nd-aip-oceanic, .zoom-wide .nd-line.nd-conv { display: none; }
+
+/* ==== 手順（SID/STAR/APP） ==== */
+.proc { --pc: #67e8f9; }
+.proc.proc-star { --pc: #a3e635; }
+.proc.proc-app { --pc: #fde047; }
+#overlay .proc-line { fill: none; stroke: var(--pc); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+#overlay .proc-line.missed { stroke-dasharray: 8 6; opacity: 0.85; }
+#overlay .proc.editing .proc-line { stroke-width: 3; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9)); }
+#overlay .proc-fixmark { fill: none; stroke: var(--pc); stroke-width: 1.5; }
+#overlay .proc-start { fill: none; stroke: var(--pc); stroke-width: 2; }
+#overlay .proc-start.est { stroke-dasharray: 3 3; }
+#overlay .proc-crs { font-size: 11px; font-weight: 700; fill: var(--pc); }
+#overlay .proc-fix { font-size: 11px; font-weight: 700; fill: #f8fafc; }
+#overlay .proc-alt, #overlay .proc-spd { font-size: 11px; fill: #f8fafc; }
+#overlay .alt-bar { stroke: #f8fafc; stroke-width: 1.3; fill: none; }
+#overlay .proc-leader { stroke: #94a3b8; stroke-width: 1; fill: none; }
+#overlay .proc.editing [data-lbl] { cursor: move; text-decoration: underline dotted; }
+.part-card { border: 1px solid var(--line); border-left: 4px solid #67e8f9; border-radius: 10px; padding: 8px; margin: 8px 0; }
+.part-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.part-card label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
+.part-card input[type="number"] { width: 88px; }
+.palette { margin: 6px 0 12px; }
+ul.warn { margin: 6px 0; padding-left: 18px; }

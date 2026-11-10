@@ -67,13 +67,25 @@ function drawAirports(view, items, show, k = 1) {
   }).join('');
 }
 
+/* ==== navaidLabel ==== 「識別符号 チャンネル 周波数」。種類名は出さない（識別符号から分かる）
+ * TACAN・DME＝チャンネルのみ、VORTAC＝チャンネル＋VOR 周波数、VOR 系・NDB＝周波数のみ */
+export function navaidLabel(ident, type, freq, ch) {
+  const t = String(type || '').toUpperCase();
+  const f = Number(freq);
+  const fText = Number.isFinite(f) && f > 0 ? String(Number(f.toFixed(3))) : '';
+  const hasCh = /TACAN|VORTAC/.test(t) && ch;
+  const hasFreq = /VOR|NDB/.test(t) && fText;
+  if (/^DME$/.test(t)) return [ident, ch].filter(Boolean).join(' ');
+  return [ident, hasCh ? ch : '', hasFreq ? fText : ''].filter(Boolean).join(' ');
+}
+
 function drawNavaids(view, items, show, k = 1) {
   if (!show || view.scale < SHOW.navaid * k) return '';
   return items.map((n) => {
     const p = view.geoToScreen(n.p[1], n.p[0]);
     if (!inView(p, view)) return '';
     let label = view.scale >= SHOW.navaidLabel * k ? esc(n.ident) : '';
-    if (view.scale >= SHOW.navaidFreq * k) label += ` ${esc(n.t)} ${esc(n.f)}`;
+    if (view.scale >= SHOW.navaidFreq * k) label = esc(navaidLabel(n.ident, n.t, n.f, n.ch));
     return `<g class="nav" transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})"><path d="M-6 0L-3-5.2H3L6 0 3 5.2H-3Z"/><circle r="1.5"/>${label ? `<text x="8" y="-6">${label}</text>` : ''}</g>`;
   }).join('');
 }
@@ -230,7 +242,7 @@ export function hitTest(view, state, sx, sy, geo, nav = null) {
     if (d < 22) near.push({ kind, d, label: label(it), name: kind === 'apt' ? (it.icao || it.n) : it.ident, lat: it.p[1], lon: it.p[0], elev: it.elev, dec: it.dec });
   });
   if (state.settings.layers.airports) pick(state.data.airports, 'apt', (a) => `${a.icao ? `${a.icao} ` : ''}${a.n}（標高 ${a.elev}ft）`);
-  if (state.settings.layers.navaids) pick(state.data.navaids, 'nav', (n) => `${n.ident} ${n.t} ${n.f}（${n.n}）`);
+  if (state.settings.layers.navaids) pick(state.data.navaids, 'nav', (n) => `${navaidLabel(n.ident, n.t, n.f, n.ch)}（${n.n}）`);
   near.sort((x, y) => x.d - y.d);
   return { near: near.slice(0, 3), airspaces: airspacesAt(state, geo) };
 }

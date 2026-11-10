@@ -2,11 +2,12 @@
  * 区域・ルート線は世界座標の固定パス（期間・表示が変わったら作り直す）、点・ラベル・ホールディングは画面座標で毎回描く */
 import { GROUPS, navIndex, navItems, isValidIn, limitText, hasGroupPrefix } from './navdata.js';
 import { destination, gsiVariation, pointInRing, toTrue } from './geo.js';
-import { esc } from './map-render.js';
+import { esc, navaidLabel } from './map-render.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const SHOW = { wpt: 1.2, wptLabel: 2, vfr: 2.5, hold: 0.9, obstacle: 3, obstacleLabel: 10, areaLabel: 1.2, routeLabel: 2, navaid: 0.25 };
-const LABEL_GAP_PX = 46;
+// ラベルの優先順：訓練・制限・臨時空域を先に（件数上限で ACC 等に押し出されないように）。臨時空域は JSDF 訓練空域と同じ扱い
+const LABEL_ORDER = ['aip-restricted', 'aip-jsdf', 'sup-airspace', 'notam-airspace'];
 const OBST_ALL_SCALE = 8;          // これ以上拡大したら全障害物
 const OBST_TALL_FT = 1000;         // それ未満の縮尺では標高 1000ft 以上だけ          // ラベル同士がこれより近ければ出さない
 const HOLD_LEG_NM = 4;
@@ -107,7 +108,8 @@ function pointSvg(view, group, it, knownIdents) {
     if (knownIdents.has(it.n) || k < SHOW.navaid) return '';
     const cls = group === 'aip-navaid' ? 'nav' : 'apt';
     const shape = cls === 'nav' ? '<path d="M-6 0L-3-5.2H3L6 0 3 5.2H-3Z"/><circle r="1.5"/>' : '<circle r="5"/><path d="M-8 0H8M0-8V8"/>';
-    return `<g class="${cls}" ${at}>${shape}<text x="8" y="-6">${esc(it.n)}</text></g>`;
+    const label = cls === 'nav' && k >= 2 ? navaidLabel(it.n, it.a.TYPE, it.a.FREQ, it.a.CH) : it.n;
+    return `<g class="${cls}" ${at}>${shape}<text x="8" y="-6">${esc(label)}</text></g>`;
   }
   if (group.startsWith('obs-') || group === 'notam-obstacle') {
     if (k < SHOW.obstacle) return '';
@@ -118,6 +120,29 @@ function pointSvg(view, group, it, knownIdents) {
   return `<g class="ndpt" ${at}><circle r="4"/>${k >= SHOW.wptLabel ? `<text x="6" y="-4">${esc(it.n)}</text>` : ''}</g>`;
 }
 
+/* ==== shortName ==== 長い区域名を縮める（temporary training area → TTA 等） */
+const ABBR = [[/temporary training areas?/i, 'TTA'], [/temporary reserved airspace/i, 'TRA'], [/training areas?/i, 'TA'], [/\s{2,}/g, ' ']];
+function shortName(n) {
+  return ABBR.reduce((s, [re, to]) => s.replace(re, to), String(n || '')).trim();
+}
+
+/* ==== labelBox ==== ラベルの画面上の範囲（文字数から幅を見積もる）。重なり判定に使う */
+const CHAR_PX = 6.6;
+const LINE_PX = 12;
+function labelBox(s, lines) {
+  const w = Math.max(...lines.map((t) => t.length)) * CHAR_PX;
+  return { x0: s.x - w / 2, x1: s.x + w / 2, y0: s.y - LINE_PX, y1: s.y + LINE_PX * (lines.length - 1) + 3 };
+}
+
+function overlaps(a, list) {
+  return list.some((b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0);
+}
+
+function rank(group) {
+  const i = LABEL_ORDER.indexOf(group);
+  return i < 0 ? LABEL_ORDER.length : i;
+}
+
 function centroid(g) {
   const n = g.length;
   return g.reduce((a, c) => [a[0] + c[0] / n, a[1] + c[1] / n], [0, 0]);
@@ -125,21 +150,23 @@ function centroid(g) {
 
 /* ==== labelsSvg ==== 区域名（上限・下限）とルート名（線の中央）。数を制限 */
 function labelsSvg(view, settings, win) {
-  if (view.scale < SHOW.areaLabel) return '';
   const out = [];
   const placed = [];
-  navIndex().forEach(({ group }) => {
-    if (!groupOn(settings, group)) return;
+  const groups = navIndex().map((r) => r.group).sort((a, b) => rank(a) - rank(b));
+  groups.forEach((group) => {
+    if (!groupOn(settings, group) || view.scale < SHOW.areaLabel) return;
     navItems(group).forEach((it) => {
       if (out.length >= MAX_LABELS || it.k === 'point' || !isValidIn(it, win)) return;
       if (it.k === 'line' && view.scale < SHOW.routeLabel) return;
       const c = it.k === 'area' ? centroid(it.g) : it.g[Math.floor(it.g.length / 2)];
       const s = view.geoToScreen(c[1], c[0]);
       if (s.x < 0 || s.y < 0 || s.x > view.width || s.y > view.height) return;
-      if (placed.some((q) => Math.abs(q.x - s.x) < LABEL_GAP_PX * 1.6 && Math.abs(q.y - s.y) < LABEL_GAP_PX / 2)) return;
-      placed.push(s);
+      const name = shortName(it.n);
       const sub = it.k === 'area' ? limitText(it) : it.a.MEA ? `MEA ${it.a.MEA}` : '';
-      out.push(`<text class="nd-lbl ${it.k}" x="${s.x.toFixed(1)}" y="${s.y.toFixed(1)}" text-anchor="middle">${esc(it.n)}${sub ? `<tspan x="${s.x.toFixed(1)}" dy="12">${esc(sub)}</tspan>` : ''}</text>`);
+      const box = labelBox(s, sub ? [name, sub] : [name]);
+      if (overlaps(box, placed)) return;
+      placed.push(box);
+      out.push(`<text class="nd-lbl ${it.k}" x="${s.x.toFixed(1)}" y="${s.y.toFixed(1)}" text-anchor="middle">${esc(name)}${sub ? `<tspan x="${s.x.toFixed(1)}" dy="${LINE_PX}">${esc(sub)}</tspan>` : ''}</text>`);
     });
   });
   return out.join('');

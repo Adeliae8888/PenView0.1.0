@@ -19,7 +19,7 @@ export const GROUPS = {
   'aip-ats': { label: 'ATS ルート', tac: false }, 'aip-rnav': { label: 'RNAV ルート', tac: false }, 'aip-direct': { label: 'Direct/TACAN ルート', tac: false },
   'aip-oceanic': { label: 'Oceanic ルート', tac: false }, 'aip-wpt': { label: 'WPT', tac: false }, 'aip-vfrrep': { label: 'VFR REP', tac: false },
   'aip-hold': { label: 'ホールディング', tac: false, nav: false }, 'aip-navaid': { label: 'NAVAID（公式）', tac: false }, 'aip-arp': { label: '飛行場（公式）', tac: true },
-  'sup-airspace': { label: 'SUP 空域', tac: true }, 'sup-navaid': { label: 'SUP NAVAID', tac: false }, 'sup-uas': { label: 'SUP 無人機', tac: false, nav: false },
+  'sup-airspace': { label: 'SUP 臨時空域', tac: true }, 'sup-navaid': { label: 'SUP NAVAID', tac: false }, 'sup-uas': { label: 'SUP 無人機', tac: false, nav: false },
   'obs-area1': { label: '障害物 AREA1', tac: false }, 'obs-area2': { label: '障害物 AREA2', tac: false }, 'obs-sup': { label: '障害物 SUP', tac: false },
   'notam-airspace': { label: 'NOTAM 空域', tac: true }, 'notam-obstacle': { label: 'NOTAM 障害物', tac: false }, 'notam-aerodrome': { label: 'NOTAM 飛行場', tac: false },
   other: { label: 'その他 KML', tac: false },
@@ -67,7 +67,7 @@ function normalize(f, group) {
     item.n = pick(a, 'DESIGNATOR', 'NAME_CODE', 'ID', 'ICAO_ID', 'HLDG_POINT', 'ID_NAME', 'NAME2', 'NAME', 'Name／ID', 'NOTAM') || f.name || '';
     if (group === 'aip-vfrrep') item.n = `${a.CS || f.name}`.toUpperCase();
     if (group === 'aip-other-area' && a.AD) item.n = `${a.AD} RWY${a.RWY || ''}`;
-    item.a = a;
+    item.a = f.name && /^SUP_/i.test(f.name) ? { ...a, name: f.name.replace('_', ' ') } : a;
   }
   item.lo = pick(a, 'ALT_LOWER', 'LOWER') || '';
   item.up = pick(a, 'ALT_UPPER', 'UPPER', 'Altitude') || '';
@@ -122,8 +122,18 @@ const cache = { index: [], items: {} };
 
 export async function loadNavData() {
   cache.index = await load(INDEX_KEY, []);
-  for (const rec of cache.index) cache.items[rec.group] = await load(`nd:${rec.group}`, []);
+  for (const rec of cache.index) cache.items[rec.group] = reparsePeriods(rec.group, await load(`nd:${rec.group}`, []));
   return cache;
+}
+
+/* ==== reparsePeriods ==== SUP の期間は保存済みの原文から毎回読み直す（期間解析を直したとき、読み込み直し不要にするため） */
+function reparsePeriods(group, items) {
+  if (!group.startsWith('sup-') && group !== 'obs-sup') return items;
+  items.forEach((it) => {
+    const text = it.a?.Period || it.a?.PeriodD;
+    if (text) it.v = parsePeriod(text);
+  });
+  return items;
 }
 
 export function navIndex() {
@@ -173,5 +183,6 @@ export function isValidIn(item, win) {
 export function limitText(item) {
   const lo = parseAltitude(item.lo)?.text || '';
   const up = parseAltitude(item.up)?.text || '';
-  return lo || up ? `${lo}–${up}` : '';
+  if (lo && up) return `${lo}–${up}`;
+  return up || (lo ? `${lo}–` : '');
 }

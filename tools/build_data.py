@@ -106,10 +106,19 @@ APT = {0: 'airport', 1: 'glider', 2: 'airfield', 3: 'intl', 4: 'heli-mil', 5: 'm
 def elev_ft(e):
     return round(e.get('value', 0) * (3.28084 if e.get('unit', 0) == 0 else 1))
 
+def runways(p):
+    """滑走路：名称・真方位・長さ m（端の座標は無いので、SID の開始点は標点から推定する）"""
+    out = []
+    for r in p.get('runways') or []:
+        ln = (r.get('dimension') or {}).get('length') or {}
+        if r.get('trueHeading') is None: continue
+        out.append({'d': r.get('designator', ''), 'hdg': r['trueHeading'], 'len': round(ln.get('value', 0) * (1 if ln.get('unit', 0) == 0 else 0.3048))})
+    return out
+
 # 標高は ft に統一
 apt = [{'id': f['properties']['_id'], 'n': f['properties']['name'], 'icao': f['properties'].get('icaoCode', ''),
         't': APT.get(f['properties']['type'], 'other'), 'elev': elev_ft(f['properties']['elevation']),
-        'p': rnd(f['geometry']['coordinates'])} for f in load('jp_apt.geojson')]
+        'rwy': runways(f['properties']), 'p': rnd(f['geometry']['coordinates'])} for f in load('jp_apt.geojson')]
 
 NAV = {0: 'DME', 1: 'TACAN', 2: 'NDB', 3: 'VOR', 4: 'VOR-DME', 5: 'VORTAC', 6: 'DVOR', 7: 'DVOR-DME', 8: 'DVORTAC'}
 nav = []
@@ -117,7 +126,7 @@ for f in load('jp_nav.geojson'):
     p = f['properties']; fr = p.get('frequency') or {}
     # dec：局の公表偏差（E=正/W=負）。ラジアルはこの値で磁方位⇔真方位を換算する
     nav.append({'id': p['_id'], 'n': p['name'], 'ident': p.get('identifier', ''), 't': NAV.get(p['type'], '?'),
-                'f': fr.get('value', ''), 'dec': p.get('magneticDeclination'), 'p': rnd(f['geometry']['coordinates'])})
+                'f': fr.get('value', ''), 'ch': p.get('channel') or '', 'dec': p.get('magneticDeclination'), 'p': rnd(f['geometry']['coordinates'])})
 
 M_TO_FT = 3.28084
 obs = []

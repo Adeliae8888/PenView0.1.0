@@ -10,12 +10,16 @@ import { loadAircraft } from './aircraft.js';
 import { loadRoutes, activeRoute } from './route.js';
 import { loadUserPoints, setPointSources } from './points.js';
 import { navContext, onOwnUpdate, validityWindow } from './nav.js';
-import { loadNavData, navIndex, airacExpired } from './navdata.js';
+import { loadNavData, navIndex, airacExpired, navItems as navItemsOf } from './navdata.js';
 import { buildNavGeo, drawNavOverlay, navHits, navCatalogPoints, officialHides } from './nav-render.js';
 import { now } from './clock.js';
 import { bindNavUi, renderNavOverlays } from './ui-nav.js';
 import { renderRouteTab, bindRouteTab, renderLogTab } from './ui-route.js';
 import { renderAircraftTab, bindAircraftTab, renderPointsTab, bindPointsTab } from './ui-data.js';
+import { renderProcTab, bindProcTab, fillFromMap } from './ui-proc.js';
+import { loadProcedures } from './procedures.js';
+import { procSvg, bindLabelDrag, bumpProcContext } from './proc-wire.js';
+import { initAndroid } from './android.js';
 
 const $ = (id) => document.getElementById(id);
 const DATA_FILES = ['land', 'airspace', 'airports', 'navaids', 'obstacles'];
@@ -26,7 +30,7 @@ let gestureActive = false;          // 指・ボタン操作中は地図を回�
 let openTab = 'route';
 const TABS = {
   route: [renderRouteTab, bindRouteTab], log: [renderLogTab, null], aircraft: [renderAircraftTab, bindAircraftTab],
-  points: [renderPointsTab, bindPointsTab],
+  points: [renderPointsTab, bindPointsTab], proc: [renderProcTab, bindProcTab],
 };
 const WIDE_SCALE = 1.0;              // px/km 未満を「広域」とする
 const NAVGEO_REFRESH_MS = 60000;      // SUP/NOTAM の有効期間で区域を出し入れするため1分ごとに作り直す
@@ -53,7 +57,7 @@ function requestDraw() {
     // 広域ではルート線（TACAN 以外）を隠す
     $('map').classList.toggle('zoom-wide', view.scale < WIDE_SCALE);
     const hides = officialHides(state.settings);
-    drawOverlay($('overlay'), view, state, currentVariation().value, navContext(), { navSvg: drawNavOverlay(view, state, win), hideObstacles: hides.obstacles });
+    drawOverlay($('overlay'), view, state, currentVariation().value, navContext(), { navSvg: drawNavOverlay(view, state, win) + procSvg(view), hideObstacles: hides.obstacles });
     const bar = scaleBar(view);
     $('scaleBar').style.width = `${bar.px}px`;
     $('scaleLabel').textContent = `${bar.nm} nm`;
@@ -130,9 +134,17 @@ function refreshNavGeo(force = false) {
   if (expired.length) $('airacChip').textContent = `AIRAC 期限切れ ${expired.length} 件`;
 }
 
+/* ==== mergeOfficialNavaids ==== 公式 NAVAID のチャンネルを OpenAIP の同じ局に補う（OpenAIP に無い場合） */
+function mergeOfficialNavaids() {
+  const byId = new Map(navItemsOf('aip-navaid').map((it) => [it.n, it]));
+  state.data.navaids.forEach((n) => { const o = byId.get(n.ident); if (o && !n.ch && o.a.CH) n.ch = o.a.CH; });
+}
+
 function refreshCatalog() {
+  mergeOfficialNavaids();
   const known = new Set([...state.data.navaids.map((n) => n.ident), ...state.data.airports.map((a) => a.icao)]);
   setPointSources({ waypoints: navCatalogPoints(known) });
+  bumpProcContext();
 }
 
 function selectHit(hit, geo) {
@@ -172,8 +184,11 @@ function wireEvents() {
     zoomAnchor: followAnchor,
   });
   on('own', (own) => { onOwnUpdate(own); applyOrientation(); renderDataPanel(); requestDraw(); });
-  on('route', () => { renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
+  on('route', () => { bumpProcContext(); renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
   on('navdata', () => { refreshCatalog(); refreshNavGeo(true); requestDraw(); });
+  on('proc', requestDraw);
+  on('toEditor', (text) => { if (fillFromMap(text)) openSheet('proc'); });
+  bindLabelDrag($('map'), requestDraw);
   $('compass').addEventListener('click', () => updateSettings({ follow: false }));
   setInterval(() => { refreshNavGeo(); requestDraw(); }, NAVGEO_REFRESH_MS);
   on('alert', renderNavOverlays);
@@ -200,7 +215,7 @@ async function boot() {
   requestPersistence();
   document.title = `${self.APP_NAME} ${self.APP_VERSION}`;
   await loadSettings();
-  await Promise.all([loadAircraft(), loadRoutes(), loadUserPoints(), loadNavData()]);
+  await Promise.all([loadAircraft(), loadRoutes(), loadUserPoints(), loadNavData(), loadProcedures()]);
   const s = state.settings;
   proj = createProjection();
   view = createView($('map'), proj);
@@ -236,6 +251,7 @@ async function boot() {
   renderDataPanel();
   applyOrientation();
   requestDraw();
+  initAndroid();
   document.body.dataset.ready = 'true';
 }
 

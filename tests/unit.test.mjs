@@ -275,6 +275,13 @@ test('KML・NOTAM・期間・高度の解析', () => {
   assert.equal(n[0].valid.to - n[0].valid.from, 86400000);
   assert.deepEqual(parsePeriod('From 1500UTC 30 SEP 2026 to 1500UTC 29 SEP 2027.'), { from: Date.UTC(2026, 8, 30, 15), to: Date.UTC(2027, 8, 29, 15) });
   assert.equal(parsePeriod('by NOTAM'), null);
+  // 「Until」は終わり（以前は開始と誤読して有効な空域を隠していた）
+  assert.deepEqual(parsePeriod('Until 1500UTC 31 MAR 2028.'), { from: null, to: Date.UTC(2028, 2, 31, 15) });
+  assert.deepEqual(parsePeriod('Between 1 OCT 2026 and 30 NOV 2026'), { from: Date.UTC(2026, 9, 1), to: Date.UTC(2026, 10, 30, 23, 59, 59) });
+  assert.deepEqual(parsePeriod('From 1500UTC 8 JUL 2026 until 1459UTC 17 MAR 2027. <BR>during hours between SR and SS, daily.'), { from: Date.UTC(2026, 6, 8, 15), to: Date.UTC(2027, 2, 17, 14, 59) });
+  assert.deepEqual(parsePeriod('From 0000UTC 12 JUN 2025 until further notice.'), { from: Date.UTC(2025, 5, 12), to: null });
+  assert.deepEqual(parsePeriod('From 1500UTC 28 OCT 2026 to 1500UTC 23 DEC 2026. <br> From 1500UTC 20 JAN 2027 to 1500UTC 17 MAR 2027.'), { from: Date.UTC(2026, 9, 28, 15), to: Date.UTC(2027, 2, 17, 15) });
+  assert.equal(parsePeriod('3 days in mid OCT 2026'), null, '日付が特定できない＝期間不明（常に表示）');
   assert.equal(parseAltitude('FL230').ft, 23000);
   assert.equal(parseAltitude('UNL').ft, Infinity);
   assert.equal(parseAltitude('11000FT').ft, 11000);
@@ -305,4 +312,66 @@ test('選択行の前後に挿入・アクティブの直接指定', () => {
   assert.equal(r.activeIdx, 3);
   addPoint(r, { name: 'Y', lat: 36, lon: 140.07 }, 'points', 2);          // アクティブより前に入れてもアクティブの点は同じ
   assert.equal(r.points[r.activeIdx].name, before[2]);
+});
+
+import { navaidLabel } from '../js/map-render.js';
+test('NAVAID ラベル：識別符号＋チャンネル／周波数（種類名なし）', () => {
+  assert.equal(navaidLabel('HUC', 'VORTAC', '113.300', '80X'), 'HUC 80X 113.3');
+  assert.equal(navaidLabel('NRE', 'VOR-DME', '117.900', '126X'), 'NRE 117.9');
+  assert.equal(navaidLabel('GOT', 'TACAN', '115.300', '100X'), 'GOT 100X');
+  assert.equal(navaidLabel('JET', 'TACAN(Compulsory)', '1201', '114X'), 'JET 114X');
+  assert.equal(navaidLabel('SND', 'DME', '114.000', '87X'), 'SND 87X');
+  assert.equal(navaidLabel('XX', 'VOR/DME', '112.15', '58Y'), 'XX 112.15');
+});
+
+import { intersectRays, rayCircle, turnRadiusNm, resolveFix, runwayStart, buildProcedure, gradientFtPerNm } from '../js/procgeo.js';
+const ST = { HUC: { name: 'HUC', lat: 36.2, lon: 140.4, dec: -7 }, GOT: { name: 'GOT', lat: 36.75, lon: 140.35, dec: -7 }, MENOU: { name: 'MENOU', lat: 36.6, lon: 140.9 } };
+const PCTX = {
+  findPoint: (n) => ST[String(n).toUpperCase()] || null,
+  resolvePoint: (t) => ST[t] || null,
+  findAirport: (icao) => (icao === 'RJAH' ? { icao: 'RJAH', elev: 105, p: [140.415, 36.1811], rwy: [{ d: '03', hdg: 30, len: 2700 }, { d: '21', hdg: 210, len: 2700 }] } : null),
+};
+
+test('エディター：交点・ラジアル×DME・旋回半径・滑走路端', () => {
+  const p = intersectRays({ lat: 0, lon: 0 }, 45, { lat: 0, lon: 1 }, 315);
+  near(p.lat, 0.5, 0.001, '45°と315°の交点'); near(p.lon, 0.5, 0.001, '');
+  assert.equal(intersectRays({ lat: 0, lon: 0 }, 0, { lat: 0, lon: 1 }, 0), null, '平行は交わらない（極での交点は範囲外）');
+  const c = rayCircle(ST.HUC, 0, ST.HUC, 15);
+  near(distanceNm(ST.HUC, c), 15, 0.001, 'DME 15');
+  near(turnRadiusNm({ mode: 'radius', radius: 2 }), 2, 1e-9, '半径を直接');
+  // 海面 250KIAS・バンク25°：250²/(68625×tan25°)=1.953nm
+  near(turnRadiusNm({ mode: 'perf', kias: 250, alt: 0, bank: 25 }), 1.953, 0.005, 'KIAS・バンクから');
+  near(gradientFtPerNm(3.3), 200.5, 0.5, '3.3% ≒ 200ft/nm');
+  const x = resolveFix('HUC R-300 / GOT R-210', PCTX);
+  near(bearingTrue(ST.HUC, x), 293, 0.05, 'HUC R-300 は真方位293（局偏差7°W）');
+  near(bearingTrue(ST.GOT, x), 203, 0.05, 'GOT R-210 は真方位203');
+  const d = resolveFix('HUC R-270 / GOT D40', PCTX);
+  near(distanceNm(ST.GOT, d), 40, 0.01, 'ラジアル×DME');
+  near(distanceNm(ST.HUC, resolveFix('HUC R-090 D12', PCTX)), 12, 0.001, 'ラジアル・DME');
+  const s = runwayStart(PCTX.findAirport('RJAH'), { d: '03', hdg: 30, len: 2700 });
+  near(distanceNm({ lat: 36.1811, lon: 140.415 }, s), 1350 / 1852, 0.001, '標点から長さの半分');
+  assert.ok(s.estimated);
+});
+
+test('エディター：SID を組み立てる（針路で上昇→旋回→ラジアル→アーク→直線）', () => {
+  const proc = {
+    type: 'SID', ad: 'RJAH', rwy: '03', parts: [
+      { id: 'a', type: 'heading', hdg: 37, end: { type: 'alt', alt: 2105, grad: 3.3 } },        // 2000ft 上昇 ≒ 10nm
+      { id: 'b', type: 'radial', station: 'HUC', radial: 60, end: { type: 'dme', dist: 20 }, turn: { mode: 'radius', radius: 1.5 }, alt: { type: 'above', v: 5000 } },
+      { id: 'c', type: 'arc', station: 'HUC', dme: 20, to: 90, dir: 'R' },
+      { id: 'd', type: 'tf', to: 'MENOU', alt: { type: 'at', v: 13000 }, speed: 250 },
+    ],
+  };
+  const r = buildProcedure(proc, PCTX);
+  assert.deepEqual(r.warnings, ['RWY03 の滑走路端は推定値です（AIP AD 2.12 の座標で直せます）']);
+  const leg1 = r.segments[0].pts;
+  near(distanceNm(leg1[0], r.fixes[0]), 2000 / gradientFtPerNm(3.3), 0.2, '上昇勾配から距離（旋回で少し切り詰め）');
+  assert.ok(r.segments.some((sg) => sg.turn), '旋回の弧がある');
+  near(distanceNm(ST.HUC, r.fixes[1]), 20, 0.01, 'ラジアル D20');
+  near(distanceNm(ST.HUC, r.fixes[2]), 20, 0.01, 'アークの終点も 20DME');
+  near(bearingTrue(ST.HUC, r.fixes[2]), 83, 0.1, 'アークの終点は R-090（真方位083）');
+  assert.equal(r.fixes[3].name, 'MENOU');
+  const fixLabel = r.labels.find((l) => l.partId === 'd' && l.which === 'fix');
+  assert.equal(fixLabel.alt.type, 'at');
+  assert.match(r.labels.find((l) => l.partId === 'b' && l.which === 'course').text, /^HUC R-060 \d+\.\d$/);
 });

@@ -115,16 +115,26 @@ export function parseAixm(text) {
   return out;
 }
 
-/* ==== parsePeriod ==== SUP の期間「From 1500UTC 30 SEP 2026 to 1500UTC 29 SEP 2027.」→ {from, to}（読めなければ null） */
+/* ==== parsePeriod ==== SUP の期間の文章 → {from, to}（読めなければ null。null の端は「制限なし」）
+ * 対応：From A to B ／ From A until B ／ Until B ／ Between A and B（時刻なし＝日の始め・終わり）／ 複数期間（最初〜最後）
+ *       until further notice（終わりなし）。「毎日 2300-0800UTC」等の時間帯は期間全体として扱う（安全側：出し続ける） */
 const MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+const DATE_RE = /(?:(\d{4})\s*UTC\s+)?(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\.?\s+(\d{4})/gi;
+const END_DAY_MS = 86399000;
 export function parsePeriod(text) {
-  const re = /(\d{4})\s*UTC\s+(\d{1,2})\s+([A-Z]{3})[A-Z]*\.?\s+(\d{4})/gi;
-  const times = [...String(text || '').matchAll(re)].map((m) => {
-    const mon = MONTHS[m[3].toUpperCase()];
-    return mon === undefined ? NaN : Date.UTC(Number(m[4]), mon, Number(m[2]), Number(m[1].slice(0, 2)), Number(m[1].slice(2)));
-  }).filter(Number.isFinite);
-  if (!times.length) return null;
-  return { from: Math.min(...times), to: times.length > 1 ? Math.max(...times) : null };
+  const t = decodeEntities(text).replace(/\s+/g, ' ');
+  const starts = [];
+  const ends = [];
+  for (const m of t.matchAll(DATE_RE)) {
+    const day = Date.UTC(Number(m[4]), MONTHS[m[3].toUpperCase()], Number(m[2]));
+    const before = t.slice(Math.max(0, m.index - 14), m.index).toLowerCase();
+    const isEnd = /(until|to|and)\s*$/.test(before);
+    const hhmm = m[1] ? (Number(m[1].slice(0, 2)) * 60 + Number(m[1].slice(2))) * 60000 : isEnd ? END_DAY_MS : 0;
+    (isEnd ? ends : starts).push(day + hhmm);
+  }
+  if (!starts.length && !ends.length) return null;
+  const open = /until further notice/i.test(t);
+  return { from: starts.length ? Math.min(...starts) : null, to: open || !ends.length ? null : Math.max(...ends) };
 }
 
 /* ==== parseAltitude ==== "11000FT" "FL230" "SFC" "UNL" "9843FT" → {ft, text}。比較用に ft（FL は ×100、UNL は ∞） */

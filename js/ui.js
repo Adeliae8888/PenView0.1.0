@@ -11,9 +11,10 @@ import { COORD_FORMATS, formatLatLon, formatBe, parseCoordinate } from './coords
 import { bearingTrue, distanceNm, toMagnetic, formatBearing, formatVariation } from './geo.js';
 import { startGps, stopGps, isGpsOn, startSim, stopSim, isSimOn, updateSim, setManualOwn } from './gps.js';
 import { esc, fmtLimit } from './map-render.js';
+import { editingOpen } from './ui-proc.js';
 
 const $ = (id) => document.getElementById(id);
-const LAYER_LABELS = { land: '陸地', airspace: '空域', airports: '飛行場', navaids: 'NAVAID', obstacles: '障害物', grid: 'グリッド' };
+const LAYER_LABELS = { land: '陸地', airspace: '空域', airports: '飛行場', navaids: 'NAVAID', obstacles: '障害物', grid: 'グリッド', procedures: '手順（SID/STAR/APP）' };
 const GPS_LABELS = { off: 'GPS OFF', acquiring: 'GPS 捕捉中', ok: 'GPS', lost: 'GPS LOST', denied: 'GPS 不可', sim: 'SIM' };
 
 export function showBanner(text) {
@@ -117,6 +118,7 @@ export function renderInfo(hits) {
       <button type="button" class="btn" data-act="bull">ブルズアイに設定</button>
       <button type="button" class="btn" data-act="own">自機をここに</button>
     </div>
+    ${editingOpen() ? '<div class="row wrap actions"><button type="button" class="btn primary" data-act="editor">手順エディターへ</button></div>' : ''}
     <p id="infoStatus" class="muted"></p>`;
   sheet.classList.add('open');
 }
@@ -188,6 +190,7 @@ function bindInfoSheet(actions) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act || !sel) return;
     if (['stpt', 'direct', 'altn', 'upt', 'bingo'].includes(act)) { pointOption(act, sel); return; }
+    if (act === 'editor') emit('toEditor', sel.name || formatLatLon(sel.lat, sel.lon, 'DD'));
     if (act === 'bull') updateSettings({ bullseye: { ...state.settings.bullseye, lat: sel.lat, lon: sel.lon } });
     if (act === 'own') { setManualOwn(sel.lat, sel.lon); updateSettings({ manualOwn: { lat: sel.lat, lon: sel.lon } }); }
     state.selection = null;
