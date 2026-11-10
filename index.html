@@ -17,6 +17,7 @@
 
   <svg id="map" class="map" aria-label="地図">
     <g id="geo"></g>
+    <g id="navgeo"></g>
     <g id="overlay"></g>
   </svg>
 
@@ -44,7 +45,8 @@
   </nav>
 
   <div class="scale"><div id="scaleBar" class="scale-bar"></div><span id="scaleLabel"></span></div>
-  <div id="northArrow" class="north-arrow hidden">N</div>
+  <button type="button" id="compass" class="compass" aria-label="方位（タップで North-up）"><svg viewBox="-20 -20 40 40" aria-hidden="true"><circle r="19"/><g id="compassNeedle"><path class="n" d="M0-15L5 0H-5Z"/><path class="s" d="M0 15L5 0H-5Z"/></g></svg></button>
+  <div id="airacChip" class="airac-chip hidden" role="status"></div>
   <div id="cursorReadout" class="cursor-readout hidden" aria-label="カーソル位置の座標"></div>
   <div class="credit">© OpenAIP (CC BY-NC) · Natural Earth</div>
 
@@ -61,10 +63,10 @@
   <aside id="dataSheet" class="sheet wide" aria-label="ルート・ログ・機体">
     <div class="sheet-head"><div class="tabs" role="tablist">
       <button type="button" data-tab="route">ルート</button><button type="button" data-tab="log">ログ</button>
-      <button type="button" data-tab="aircraft">機体</button><button type="button" data-tab="points">ポイント</button><button type="button" data-tab="share">共有</button>
+      <button type="button" data-tab="aircraft">機体</button><button type="button" data-tab="points">ポイント</button>
     </div><button type="button" class="btn" data-close="dataSheet">閉じる</button></div>
     <div id="tab-route" class="tab-body"></div><div id="tab-log" class="tab-body"></div><div id="tab-aircraft" class="tab-body"></div>
-    <div id="tab-points" class="tab-body"></div><div id="tab-share" class="tab-body"></div>
+    <div id="tab-points" class="tab-body"></div>
   </aside>
 
   <aside id="settingsSheet" class="sheet settings" aria-label="設定">
@@ -130,9 +132,30 @@
     </section>
 
     <section class="group">
+      <h3>NAV データ（AIP・SUP・障害物・NOTAM）</h3>
+      <div class="row wrap">
+        <label class="btn primary">ファイルを読み込む<input type="file" id="navFile" accept=".zip,.kml,.xml" multiple hidden /></label>
+        <label><input type="checkbox" id="navArea2" /> AREA2（空港周辺の詳細障害物）も読む</label>
+      </div>
+      <p class="muted">国土交通省の配布 zip をそのまま選べます（中の zip も展開）。KML・NOTAM（AIXM の XML）も可。同じ種類は新しいもので置き換え。</p>
+      <p id="navStatus" class="muted"></p>
+      <div id="navList"></div>
+      <label><input type="checkbox" id="preferOfficial" /> 公式データがあれば OpenAIP の空域・障害物を隠す</label>
+    </section>
+
+    <section class="group">
+      <h3>データの書き出し・読込</h3>
+      <div id="ioRows"></div>
+      <input type="file" id="ioFile" accept=".json,application/json" hidden />
+      <p id="ioStatus" class="muted"></p>
+    </section>
+
+    <section class="group">
       <h3>レイヤー</h3>
       <div id="layerToggles" class="chips"></div>
-      <h3>空域の種類</h3>
+      <h3>読み込んだデータ</h3>
+      <div id="navToggles" class="chips"></div>
+      <h3>空域の種類（OpenAIP）</h3>
       <div id="airspaceToggles" class="chips"></div>
     </section>
 

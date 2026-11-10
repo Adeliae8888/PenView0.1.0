@@ -64,7 +64,7 @@ await page.mouse.move(600, 400); await page.mouse.down(); await page.mouse.move(
 await page.waitForTimeout(600);
 result.afterDrag = await page.evaluate(() => ({
   follow: document.getElementById('followBtn').classList.contains('active'),
-  northArrowHidden: document.getElementById('northArrow').classList.contains('hidden'),
+  compassNeedleDeg: Number((document.getElementById('compassNeedle').getAttribute('transform') || 'rotate(0)').match(/rotate\(([-\d.]+)/)[1]),
 }));
 
 // 地図をタップ → 地点情報

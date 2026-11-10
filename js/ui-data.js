@@ -1,8 +1,7 @@
-/* ==== ui-data.js ==== 機体（機種・形態の性能登録）／ユーザーポイント／共有（JSON 書き出し・読込） */
+/* ==== ui-data.js ==== 機体（機種・形態の性能登録）／ユーザーポイント（書き出し・読込は設定画面 ui-settings-data.js） */
 import { state, emit, currentVariation } from './state.js';
-import { aircraftList, addAircraft, removeAircraft, saveAircraft, blankConfig, mergeAircraft } from './aircraft.js';
-import { userPoints, addUserPoint, removeUserPoint, resolvePoint, setPointSources, saveUserPoints } from './points.js';
-import { routes, mergeRoutes } from './route.js';
+import { aircraftList, addAircraft, removeAircraft, saveAircraft, blankConfig } from './aircraft.js';
+import { userPoints, addUserPoint, removeUserPoint, resolvePoint } from './points.js';
 import { convertSpeed, nextSpeedUnit } from './aero.js';
 import { formatLatLon } from './coords.js';
 import { esc } from './map-render.js';
@@ -118,44 +117,4 @@ export function bindPointsTab(el, rerender) {
     emit('route');
     rerender();
   });
-}
-
-/* ==== renderShareTab ==== 僚機との共有：ルート・機体・ユーザーポイントを1つの JSON に */
-export function renderShareTab(el) {
-  el.innerHTML = `<p>ルート ${routes().length} 本・機種 ${aircraftList().length}・ユーザーポイント ${userPoints().length} 点</p>
-    <div class="row wrap"><button type="button" class="btn primary" data-share="export">書き出し（JSON）</button>
-      <label class="btn">読込<input type="file" id="shareFile" accept=".json,application/json" hidden /></label></div><p id="shareStatus" class="muted"></p>`;
-}
-
-export function bindShareTab(el, rerender) {
-  el.addEventListener('click', (e) => {
-    if (e.target.closest('[data-share="export"]')) exportShare();
-  });
-  el.addEventListener('change', async (e) => {
-    if (e.target.id !== 'shareFile' || !e.target.files[0]) return;
-    const status = el.querySelector('#shareStatus');
-    try {
-      const data = JSON.parse(await e.target.files[0].text());
-      if (data.type !== 'penview-share') throw new Error('PenView の共有ファイルではありません');
-      mergeRoutes(data.routes);
-      mergeAircraft(data.aircraft);
-      const ups = userPoints();
-      (data.userPoints || []).forEach((u) => { if (!ups.some((x) => x.id === u.id)) ups.push(u); });
-      setPointSources({ userPoints: ups });
-      saveUserPoints();
-      emit('route');
-      rerender();
-      el.querySelector('#shareStatus').textContent = '読み込みました';
-    } catch (err) { status.textContent = `読み込めません：${err.message}`; }
-  });
-}
-
-function exportShare() {
-  const data = { type: 'penview-share', version: 1, exportedAt: new Date().toISOString(), app: self.APP_VERSION, routes: routes(), aircraft: aircraftList(), userPoints: userPoints() };
-  const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `penview-share-${new Date().toISOString().slice(0, 10)}.json`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }

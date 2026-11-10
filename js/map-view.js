@@ -10,7 +10,7 @@ const LONG_PRESS_MS = 550;
 const WHEEL_ZOOM = 1.0015;
 
 export function createView(svg, proj) {
-  const v = { cx: 0, cy: 0, scale: 0.6, rot: 0, width: 1, height: 1, listeners: new Set() };
+  const v = { cx: 0, cy: 0, scale: 0.6, rot: 0, width: 1, height: 1, listeners: new Set(), proj };
   const RAD = Math.PI / 180;
 
   v.resize = () => {
@@ -87,7 +87,6 @@ export function attachGestures(svg, view, { onTap, onLongPress, onUserMove, onPo
   const pointers = new Map();
   let tapStart = null;
   let pinch = null;
-
   svg.addEventListener('pointerdown', (e) => {
     svg.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -134,12 +133,11 @@ export function attachGestures(svg, view, { onTap, onLongPress, onUserMove, onPo
       onTap?.(e.clientX - r.left, e.clientY - r.top);
     }
     pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinch = null;
+    pinch = pointers.size < 2 ? null : pinch;
     tapStart = null;
     if (pointers.size === 0) onGestureEnd?.();
   };
-  svg.addEventListener('pointerup', end);
-  svg.addEventListener('pointercancel', end);
+  ['pointerup', 'pointercancel'].forEach((t) => svg.addEventListener(t, end));
   attachWheelAndMenu(svg, view, local, { onLongPress, zoomAnchor });
 }
 

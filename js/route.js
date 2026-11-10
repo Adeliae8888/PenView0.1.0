@@ -37,7 +37,7 @@ export function setActiveRoute(id) {
 export function newRoute(name = `ROUTE ${store.routes.length + 1}`) {
   const r = {
     id: uid('rt'), name, points: [], alternate: [], activeIdx: 1, configRef: null, startFuel: null, joker: null, bingo: null,
-    plannedTakeoff: null, wind: null, isaDev: 0, cruiseAlt: DEFAULT_CRUISE_ALT, flight: { takeoffAt: null, checks: [], directOrigin: null },
+    plannedTakeoff: null, wind: null, isaDev: 0, cruiseAlt: DEFAULT_CRUISE_ALT, bingoPoint: null, homeBingo: null, homeBingoPointId: null, flight: { takeoffAt: null, checks: [], directOrigin: null },
   };
   store.routes.push(r);
   if (!store.activeId) store.activeId = r.id;
@@ -69,13 +69,26 @@ export function makePoint(src, route) {
   };
 }
 
-/* ==== addPoint ==== 2点以上あれば目的地の手前に、未満なら末尾に入れる。list='alternate' で代替経路へ */
-export function addPoint(route, src, list = 'points') {
+/* ==== addPoint ==== index 指定があればその位置に。無ければ、2点以上あれば目的地の手前、未満なら末尾。list='alternate' で代替経路へ */
+export function addPoint(route, src, list = 'points', index = null) {
   const arr = route[list];
   const p = makePoint(src, route);
-  if (list === 'points' && arr.length >= 2) arr.splice(arr.length - 1, 0, p); else arr.push(p);
+  if (Number.isInteger(index)) {
+    const i = Math.max(0, Math.min(arr.length, index));
+    arr.splice(i, 0, p);
+    if (list === 'points' && i <= route.activeIdx && arr.length > 2) route.activeIdx += 1;   // アクティブの点は変えない
+  } else if (list === 'points' && arr.length >= 2) arr.splice(arr.length - 1, 0, p); else arr.push(p);
   saveRoutes();
   return p;
+}
+
+/* ==== setActiveIdx ==== アクティブ STPT を直接選ぶ（DEP は選べない） */
+export function setActiveIdx(route, i) {
+  if (i < 1 || i >= route.points.length) return;
+  route.points.forEach((p, k) => { if (k >= i) p.skipped = false; });
+  route.activeIdx = i;
+  route.flight.directOrigin = null;
+  saveRoutes();
 }
 
 export function removePoint(route, index, list = 'points') {

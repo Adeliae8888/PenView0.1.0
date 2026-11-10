@@ -2,7 +2,7 @@
 import { state, emit } from './state.js';
 import { formatBearing } from './geo.js';
 import { esc } from './map-render.js';
-import { navContext, liveNav } from './nav.js';
+import { navContext, liveNav, XTK_WARN_NM, XTK_ALERT_NM } from './nav.js';
 import { stepActive, executeDirect, recordFuelCheck } from './route.js';
 import { now, formatClock, formatDuration } from './clock.js';
 import { openKeypad } from './keypad.js';
@@ -17,6 +17,26 @@ function fmtTos(sec) {
   return a < 5 ? '<span class="tos ok">TOS ON</span>' : `<span class="tos ${sec > 0 ? 'late' : 'early'}">TOS ${sec > 0 ? '+' : '−'}${txt} ${sec > 0 ? 'LATE' : 'EARLY'}</span>`;
 }
 
+/* ==== xtkHtml ==== DTK と横ずれ。2nm 以上で黄、3.5nm 以上で赤（R＝コースの右にいる） */
+function xtkHtml(live) {
+  if (!Number.isFinite(live.xtk)) return '';
+  const a = Math.abs(live.xtk);
+  const cls = a >= XTK_ALERT_NM ? 'bad' : a >= XTK_WARN_NM ? 'warn' : '';
+  return `<div class="dp-row small"><span><b>DTK</b>${formatBearing(live.dtk)}°</span><span class="xtk ${cls}"><b>XTK</b>${a.toFixed(1)}${a < 0.05 ? '' : live.xtk > 0 ? 'R' : 'L'}</span></div>`;
+}
+
+/* ==== gatesHtml ==== BINGO（地点）と HOME BINGO の見込み／最低値 */
+function gatesHtml(gates) {
+  const one = (label, g) => {
+    if (!g) return '';
+    if (g.passed) return `<span class="gate passed"><b>${label}</b>${esc(g.name)} 通過</span>`;
+    const bad = Number.isFinite(g.proj) && g.proj < g.min;
+    return `<span class="gate ${bad ? 'bad' : ''}"><b>${label}</b>${lb(g.proj)}<small>/${lb(g.min)} @${esc(g.name)}</small></span>`;
+  };
+  const html = one('BINGO', gates?.bingo) + one('HOME', gates?.home);
+  return html ? `<div class="dp-gates">${html}</div>` : '';
+}
+
 /* ==== navBlockHtml ==== データパネル上段（ルートがアクティブなとき） */
 export function navBlockHtml() {
   const nav = navContext();
@@ -29,7 +49,7 @@ export function navBlockHtml() {
     : `<div class="dp-sub warn">燃料計算不可：${esc((nav.plan?.missing || []).slice(0, 2).join(', ') || '2点以上必要')}</div>`;
   return `<div class="dp-stpt"><span class="dp-idx">${esc(label)}</span><span class="dp-name">${esc(live.target?.name || '')}</span>${r.flight.directOrigin ? '<span class="dp-dir">DIR</span>' : ''}</div>
     <div class="dp-row"><span><b>BRG</b>${formatBearing(live.brg)}°</span><span><b>DIST</b>${Number.isFinite(live.dist) ? live.dist.toFixed(1) : '---'}</span><span><b>ETE</b>${formatDuration(live.ete)}</span></div>
-    <div class="dp-sub"><b>ETA</b> ${formatClock(live.eta)} ${fmtTos(live.tosDelta)}</div>${fuel}
+    ${xtkHtml(live)}<div class="dp-sub"><b>ETA</b> ${formatClock(live.eta)} ${fmtTos(live.tosDelta)}</div>${fuel}${gatesHtml(live.gates)}
     <div class="dp-actions"><button type="button" class="btn" data-nav="prev" aria-label="前の STPT">▲</button><button type="button" class="btn" data-nav="next" aria-label="次の STPT">▼</button><button type="button" class="btn" data-nav="log">LOG</button><button type="button" class="btn" data-nav="fuel">FUEL</button></div>`;
 }
 
@@ -50,8 +70,8 @@ export function renderNavOverlays() {
   $('fuelPrompt').classList.toggle('hidden', !fp);
   if (fp) $('fuelPromptText').textContent = `FUEL? ${fp.idx} ${fp.name}`;
   const banner = $('fuelAlert');
-  banner.className = `fuel-alert ${state.alert || 'hidden'}${state.alertAck ? ' acked' : ''}`;
-  if (state.alert) $('fuelAlertText').textContent = state.alert === 'bingo' ? 'BINGO FUEL' : 'JOKER FUEL';
+  banner.className = `fuel-alert ${state.alert === 'home' ? 'bingo' : state.alert || 'hidden'}${state.alertAck ? ' acked' : ''}`;
+  if (state.alert) $('fuelAlertText').textContent = { bingo: 'BINGO FUEL', home: 'HOME BINGO', joker: 'JOKER FUEL' }[state.alert];
   $('clockPill').textContent = formatClock(now());
 }
 

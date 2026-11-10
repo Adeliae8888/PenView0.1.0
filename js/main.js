@@ -1,18 +1,21 @@
 /* ==== main.js ==== 起動と全体の配線：設定読込 → データ読込 → 地図構築 → UI 結線 → Service Worker 登録 */
-import { state, on, loadSettings, currentVariation, SETTINGS_KEY } from './state.js';
+import { state, on, loadSettings, currentVariation, updateSettings, SETTINGS_KEY } from './state.js';
 import { setStoreErrorHandler, requestPersistence, saveLater } from './store.js';
 import { createProjection } from './projection.js';
 import { createView, attachGestures } from './map-view.js';
 import { buildGeoLayer, applyGeoVisibility, drawOverlay, scaleBar, hitTest } from './map-render.js';
-import { bindUi, renderDataPanel, renderTopBar, renderInfo, renderSettings, renderCursor, showBanner } from './ui.js';
+import { bindUi, renderDataPanel, renderTopBar, renderInfo, renderSettings, renderCursor, renderPickList, showBanner } from './ui.js';
 import { setManualOwn } from './gps.js';
 import { loadAircraft } from './aircraft.js';
 import { loadRoutes, activeRoute } from './route.js';
 import { loadUserPoints, setPointSources } from './points.js';
-import { navContext, onOwnUpdate } from './nav.js';
+import { navContext, onOwnUpdate, validityWindow } from './nav.js';
+import { loadNavData, navIndex, airacExpired } from './navdata.js';
+import { buildNavGeo, drawNavOverlay, navHits, navCatalogPoints, officialHides } from './nav-render.js';
+import { now } from './clock.js';
 import { bindNavUi, renderNavOverlays } from './ui-nav.js';
 import { renderRouteTab, bindRouteTab, renderLogTab } from './ui-route.js';
-import { renderAircraftTab, bindAircraftTab, renderPointsTab, bindPointsTab, renderShareTab, bindShareTab } from './ui-data.js';
+import { renderAircraftTab, bindAircraftTab, renderPointsTab, bindPointsTab } from './ui-data.js';
 
 const $ = (id) => document.getElementById(id);
 const DATA_FILES = ['land', 'airspace', 'airports', 'navaids', 'obstacles'];
@@ -23,8 +26,13 @@ let gestureActive = false;          // 指・ボタン操作中は地図を回�
 let openTab = 'route';
 const TABS = {
   route: [renderRouteTab, bindRouteTab], log: [renderLogTab, null], aircraft: [renderAircraftTab, bindAircraftTab],
-  points: [renderPointsTab, bindPointsTab], share: [renderShareTab, bindShareTab],
+  points: [renderPointsTab, bindPointsTab],
 };
+const WIDE_SCALE = 1.0;              // px/km 未満を「広域」とする
+const NAVGEO_REFRESH_MS = 60000;      // SUP/NOTAM の有効期間で区域を出し入れするため1分ごとに作り直す
+let proj;
+let win = { start: Date.now(), end: Date.now() };
+let navGeoKey = '';
 
 async function loadData() {
   const results = await Promise.all(DATA_FILES.map((name) => fetch(`data/${name}.json`).then((r) => {
@@ -41,14 +49,16 @@ function requestDraw() {
   requestAnimationFrame(() => {
     drawPending = false;
     $('geo').setAttribute('transform', view.transform());
-    drawOverlay($('overlay'), view, state, currentVariation().value, navContext());
+    $('navgeo').setAttribute('transform', view.transform());
+    // 広域ではルート線（TACAN 以外）を隠す
+    $('map').classList.toggle('zoom-wide', view.scale < WIDE_SCALE);
+    const hides = officialHides(state.settings);
+    drawOverlay($('overlay'), view, state, currentVariation().value, navContext(), { navSvg: drawNavOverlay(view, state, win), hideObstacles: hides.obstacles });
     const bar = scaleBar(view);
     $('scaleBar').style.width = `${bar.px}px`;
     $('scaleLabel').textContent = `${bar.nm} nm`;
     const c = view.center();
-    const northAngle = view.screenAngle(c.lat, c.lon, 0);
-    $('northArrow').classList.toggle('hidden', Math.abs(northAngle) < 1);
-    $('northArrow').style.transform = `rotate(${northAngle}deg)`;
+    $('compassNeedle').setAttribute('transform', `rotate(${view.screenAngle(c.lat, c.lon, 0).toFixed(1)})`);
   });
 }
 
@@ -104,18 +114,48 @@ function rememberView() {
   saveLater(SETTINGS_KEY, () => state.settings, 1000);
 }
 
-/* ==== handleTap ==== 地点カーソル＋オプション（PC はクリック、タッチは長押し）。近くの地点にスナップ */
-function handleTap(sx, sy) {
-  const geo = view.screenToGeo(sx, sy);
-  lastHits = hitTest(view, state, sx, sy, geo, navContext());
-  const snap = lastHits.near[0];
-  state.selection = snap ? { lat: snap.lat, lon: snap.lon, name: snap.name, pointId: snap.pointId, elev: snap.elev } : geo;
+/* ==== refreshNavGeo ==== 読み込みデータの区域・線を、表示グループと有効期間の時間帯で作り直す */
+function refreshNavGeo(force = false) {
+  win = validityWindow();
+  const minute = (t) => Math.floor(t / NAVGEO_REFRESH_MS);
+  const key = JSON.stringify([navIndex().map((r) => r.group + r.importedAt), state.settings.mode, Object.entries(state.settings.layers).filter(([k]) => k.startsWith('nd:')), minute(win.start), minute(win.end)]);
+  if (force || key !== navGeoKey) {
+    navGeoKey = key;
+    buildNavGeo($('navgeo'), proj, state.settings, win);
+  }
+  applyGeoVisibility($('geo'), state.settings, officialHides(state.settings).airspace);
+  const t = now();
+  const expired = navIndex().filter((r) => airacExpired(r, t));
+  $('airacChip').classList.toggle('hidden', !expired.length);
+  if (expired.length) $('airacChip').textContent = `AIRAC 期限切れ ${expired.length} 件`;
+}
+
+function refreshCatalog() {
+  const known = new Set([...state.data.navaids.map((n) => n.ident), ...state.data.airports.map((a) => a.icao)]);
+  setPointSources({ waypoints: navCatalogPoints(known) });
+}
+
+function selectHit(hit, geo) {
+  state.selection = hit ? { lat: hit.lat, lon: hit.lon, name: hit.name, pointId: hit.pointId, elev: hit.elev } : geo;
   state.cursor = { lat: state.selection.lat, lon: state.selection.lon };
   renderCursor();
-  $('dataSheet').classList.remove('open');
-  $('settingsSheet').classList.remove('open');
   renderInfo(lastHits);
   requestDraw();
+}
+
+/* ==== handleTap ==== 地点カーソル＋オプション（PC はクリック、タッチは長押し）。近くに複数あればリストで選ぶ */
+function handleTap(sx, sy) {
+  const geo = view.screenToGeo(sx, sy);
+  const nav = navContext();
+  lastHits = hitTest(view, state, sx, sy, geo, nav);
+  const extra = navHits(view, state, sx, sy, geo, win);
+  const seen = new Set();
+  lastHits.near = [...lastHits.near, ...extra.near].sort((a, b) => a.d - b.d).filter((h) => !seen.has(h.label) && seen.add(h.label));
+  lastHits.airspaces = [...lastHits.airspaces, ...extra.areas];
+  $('dataSheet').classList.remove('open');
+  $('settingsSheet').classList.remove('open');
+  if (lastHits.near.length >= 2) { renderPickList(lastHits.near.slice(0, 8), geo, (hit) => selectHit(hit, geo)); return; }
+  selectHit(lastHits.near[0], geo);
 }
 
 function wireEvents() {
@@ -132,7 +172,10 @@ function wireEvents() {
     zoomAnchor: followAnchor,
   });
   on('own', (own) => { onOwnUpdate(own); applyOrientation(); renderDataPanel(); requestDraw(); });
-  on('route', () => { renderDataPanel(); renderNavOverlays(); renderTab(); requestDraw(); });
+  on('route', () => { renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
+  on('navdata', () => { refreshCatalog(); refreshNavGeo(true); requestDraw(); });
+  $('compass').addEventListener('click', () => updateSettings({ follow: false }));
+  setInterval(() => { refreshNavGeo(); requestDraw(); }, NAVGEO_REFRESH_MS);
   on('alert', renderNavOverlays);
   setInterval(() => { renderNavOverlays(); renderDataPanel(); }, 1000);
   on('tick', () => { renderDataPanel(); requestDraw(); });
@@ -141,7 +184,7 @@ function wireEvents() {
   on('settings', () => {
     renderTopBar();
     renderDataPanel();
-    applyGeoVisibility($('geo'), state.settings);
+    refreshNavGeo();
     applyOrientation();
     if (state.selection) renderInfo(lastHits);
     requestDraw();
@@ -157,9 +200,9 @@ async function boot() {
   requestPersistence();
   document.title = `${self.APP_NAME} ${self.APP_VERSION}`;
   await loadSettings();
-  await Promise.all([loadAircraft(), loadRoutes(), loadUserPoints()]);
+  await Promise.all([loadAircraft(), loadRoutes(), loadUserPoints(), loadNavData()]);
   const s = state.settings;
-  const proj = createProjection();
+  proj = createProjection();
   view = createView($('map'), proj);
   measureInsets();
   view.resize();
@@ -173,7 +216,8 @@ async function boot() {
   }
   setPointSources({ airports: state.data.airports, navaids: state.data.navaids, routePoints: () => activeRoute()?.points || [] });
   buildGeoLayer($('geo'), proj, state.data);
-  applyGeoVisibility($('geo'), s);
+  refreshCatalog();
+  refreshNavGeo(true);
   bindUi({
     zoom: (f) => {
       const a = followAnchor() || { x: view.width / 2, y: view.height / 2 };

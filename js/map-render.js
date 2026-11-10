@@ -42,11 +42,11 @@ export function buildGeoLayer(group, proj, data) {
   Object.entries(byClass).forEach(([cls, paths]) => add(`as as-${cls}`, paths.join(''), { 'data-as': cls }));
 }
 
-/* ==== applyGeoVisibility ==== レイヤー・空域種別の表示切替 */
-export function applyGeoVisibility(group, settings) {
+/* ==== applyGeoVisibility ==== レイヤー・空域種別の表示切替。hideOpenAip＝公式データ優先で OpenAIP 空域を隠す */
+export function applyGeoVisibility(group, settings, hideOpenAip = false) {
   group.querySelector('.land')?.classList.toggle('off', !settings.layers.land);
   group.querySelectorAll('[data-as]').forEach((p) => {
-    p.classList.toggle('off', !settings.layers.airspace || !settings.airspaceClasses[p.dataset.as]);
+    p.classList.toggle('off', hideOpenAip || !settings.layers.airspace || !settings.airspaceClasses[p.dataset.as]);
   });
 }
 
@@ -184,14 +184,16 @@ function drawUserPoints(view, items) {
   }).join('');
 }
 
-/* ==== drawOverlay ==== 画面座標の記号層を丸ごと描き直す（毎フレーム最大1回）。nav = {route, plan, userPoints} */
-export function drawOverlay(el, view, state, variation, nav = null) {
+/* ==== drawOverlay ==== 画面座標の記号層を丸ごと描き直す（毎フレーム最大1回）。nav = {route, plan, userPoints}
+ * extra = { navSvg: 読み込みデータの点・ラベル, hideObstacles: 公式障害物があるので OpenAIP を隠す } */
+export function drawOverlay(el, view, state, variation, nav = null, extra = {}) {
   const s = state.settings;
   const tac = s.mode === 'TAC';
   const k = tac ? TAC_DECLUTTER : 1;
   el.innerHTML = [
     s.layers.grid ? drawGrid(view, s.coordFormat, view.insetTop || 0) : '',
-    drawObstacles(view, state.data.obstacles, s.layers.obstacles && !tac),
+    drawObstacles(view, state.data.obstacles, s.layers.obstacles && !tac && !extra.hideObstacles),
+    extra.navSvg || '',
     drawAirports(view, state.data.airports, s.layers.airports, k),
     drawNavaids(view, state.data.navaids, s.layers.navaids, k),
     drawBullseye(view, s.bullseye, variation, tac),

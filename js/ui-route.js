@@ -1,6 +1,6 @@
 /* ==== ui-route.js ==== ルート編集（経路・代替経路・STPT 詳細）とフライトログ表 */
 import { state, emit, currentVariation } from './state.js';
-import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes } from './route.js';
+import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes, setActiveIdx } from './route.js';
 import { aircraftList } from './aircraft.js';
 import { resolvePoint, searchPoints } from './points.js';
 import { navContext, etaTable } from './nav.js';
@@ -16,6 +16,8 @@ const num = (v) => (v === '' || v === null || v === undefined ? null : Number(v)
 const val = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : v);
 const lb = (v) => (Number.isFinite(v) ? Math.round(v).toLocaleString('en-US') : '---');
 let editing = null;               // 詳細を開いている STPT {list, i}
+let selected = null;              // 編集で選択中の行 {list, i}（挿入の基準）
+let insertMode = 'after';         // 'before' | 'after'
 let editingRouteId = null;
 
 export function editingRoute() {
@@ -36,8 +38,9 @@ function routeFields(r) {
   const f = (key, label, ph = '', type = 'number') => `<label>${label}<input type="${type}" data-rf="${key}" value="${esc(val(r[key]))}" placeholder="${esc(ph)}" /></label>`;
   return `<div class="row wrap">${f('name', '名前', '', 'text')}
       <label class="grow">機体/形態<select data-rf="configRef">${configOptions(r)}</select></label></div>
-    <div class="row wrap">${f('startFuel', '搭載燃料 lb', '形態の値')}${f('joker', 'JOKER lb')}${f('bingo', 'BINGO lb')}
-      ${f('plannedTakeoff', `計画離陸 ${state.settings.timeZone === 'JST' ? 'L' : 'Z'}`, 'HHMM', 'text')}${f('cruiseAlt', '既定高度 ft')}</div>
+    <div class="row wrap">${f('startFuel', '搭載燃料 lb', '形態の値')}${f('plannedTakeoff', `計画離陸 ${state.settings.timeZone === 'JST' ? 'L' : 'Z'}`, 'HHMM', 'text')}${f('cruiseAlt', '既定高度 ft')}${f('joker', 'JOKER lb（TAC）')}</div>
+    <div class="row wrap">${f('bingo', 'BINGO lb')}<label class="grow">BINGO 地点<input type="text" data-rf="bingoPointText" value="${esc(r.bingoPoint?.name || '')}" placeholder="未設定＝現在の燃料で判定" list="ptSuggest" /></label></div>
+    <div class="row wrap">${f('homeBingo', 'HOME BINGO lb')}<label class="grow">HOME 地点<select data-rf="homeBingoPointId"><option value="">目的地（接地時）</option>${r.points.slice(1, -1).map((p, i) => `<option value="${p.id}" ${p.id === r.homeBingoPointId ? 'selected' : ''}>${i + 1} ${esc(p.name)}</option>`).join('')}</select></label></div>
     <div class="row wrap"><label>予報風 °T<input type="number" data-rf="windDir" value="${esc(val(r.wind?.dir))}" /></label>
       <label>kt<input type="number" data-rf="windSpd" value="${esc(val(r.wind?.spd))}" /></label>${f('isaDev', 'ISA偏差 ℃')}</div>`;
 }
@@ -58,18 +61,25 @@ function pointRows(r, list) {
   const arr = r[list];
   return arr.map((p, i) => {
     const tag = list === 'alternate' ? (i === arr.length - 1 ? 'ALT' : `A${i + 1}`) : i === 0 ? 'DEP' : i === arr.length - 1 ? 'DST' : String(i);
-    const cls = [list === 'points' && i === r.activeIdx && r.id === activeRoute()?.id ? 'active' : '', p.skipped ? 'skip' : ''].join(' ');
+    const isActive = list === 'points' && i === r.activeIdx;
+    const isSel = selected && selected.list === list && selected.i === i;
+    const cls = [isActive ? 'active' : '', isSel ? 'sel' : '', p.skipped ? 'skip' : ''].join(' ');
     const open = editing && editing.list === list && editing.i === i;
-    return `<tr class="${cls}"><td>${tag}</td><td><b>${esc(p.name)}</b></td>
+    const act = list === 'points' && i > 0 ? `<button type="button" class="btn sm act ${isActive ? 'on' : ''}" data-pact="active" data-list="${list}" data-i="${i}" title="アクティブにする">▶</button>` : '';
+    return `<tr class="${cls}"><td>${tag}</td><td class="pick" data-pact="select" data-list="${list}" data-i="${i}"><b>${esc(p.name)}</b></td>
       <td><input type="number" class="alt" data-pf="alt" data-list="${list}" data-i="${i}" value="${esc(val(p.alt))}" /></td>
-      <td class="nowrap"><button type="button" class="btn sm" data-pact="detail" data-list="${list}" data-i="${i}">${open ? '▾' : '▸'}</button>
+      <td class="nowrap">${act}<button type="button" class="btn sm" data-pact="detail" data-list="${list}" data-i="${i}">${open ? '閉' : '詳細'}</button>
       <button type="button" class="btn sm" data-pact="up" data-list="${list}" data-i="${i}">↑</button><button type="button" class="btn sm" data-pact="down" data-list="${list}" data-i="${i}">↓</button>
       <button type="button" class="btn sm danger" data-pact="del" data-list="${list}" data-i="${i}">×</button></td></tr>${open ? pointDetail(p, list, i) : ''}`;
   }).join('');
 }
 
 function addRow(list) {
-  return `<div class="row"><input type="text" class="grow" list="ptSuggest" data-add-input="${list}" placeholder="HUC / RJAH / HUC 270/25 / 座標" autocomplete="off" />
+  const sel = selected && selected.list === list;
+  const mode = sel ? `<div class="row wrap seg-mini"><span class="muted">選択中の行の</span>
+    <label><input type="radio" name="ins-${list}" data-insmode="before" ${insertMode === 'before' ? 'checked' : ''}/>前に挿入</label>
+    <label><input type="radio" name="ins-${list}" data-insmode="after" ${insertMode === 'after' ? 'checked' : ''}/>後に挿入</label></div>` : '';
+  return `${mode}<div class="row"><input type="text" class="grow" list="ptSuggest" data-add-input="${list}" placeholder="HUC / RJAH / HUC 270/25 / 座標" autocomplete="off" />
     <input type="number" class="alt" data-add-alt="${list}" placeholder="高度" /><button type="button" class="btn primary" data-add="${list}">追加</button></div><p class="muted" data-add-status="${list}"></p>`;
 }
 
@@ -81,12 +91,18 @@ export function renderRouteTab(el) {
       <button type="button" class="btn" data-ract="new">新規</button>${r ? '<button type="button" class="btn" data-ract="dup">複製</button><button type="button" class="btn danger" data-ract="del">削除</button>' : ''}</div>
     ${r ? `<div class="row"><button type="button" class="btn ${r.id === activeRoute()?.id ? 'active' : ''}" data-ract="activate">${r.id === activeRoute()?.id ? '★ アクティブ' : 'アクティブにする'}</button>
       <button type="button" class="btn" data-ract="reset">飛行実績をリセット</button></div>
-    ${routeFields(r)}<h3>経路（DEP → STPT → DST）</h3><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
+    ${routeFields(r)}<h3>経路（DEP → STPT → DST）</h3><p class="muted legend">▶ 紫＝航法中のアクティブ STPT（▶ で変更）／ 枠＝編集で選択中の行（名前をタップ。追加は選択行の前後に入る）</p><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
     <h3>代替経路（DST → ALT）任意</h3><table class="pts">${pointRows(r, 'alternate')}</table>${addRow('alternate')}` : '<p class="muted">「新規」でルートを作成してください</p>'}
     <datalist id="ptSuggest"></datalist>`;
 }
 
 function setRouteField(r, key, value) {
+  if (key === 'bingoPointText') {
+    const p = value.trim() ? resolvePoint(value, { bullseye: state.settings.bullseye, variation: currentVariation().value }) : null;
+    r.bingoPoint = p ? { name: p.name || value.trim().toUpperCase(), lat: p.lat, lon: p.lon } : null;
+    return;
+  }
+  if (key === 'homeBingoPointId') { r.homeBingoPointId = value || null; return; }
   if (key === 'configRef') { const [aircraftId, configId] = value.split('|'); r.configRef = value ? { aircraftId, configId } : null; return; }
   if (key === 'windDir' || key === 'windSpd') { r.wind = { dir: 0, spd: 0, ...r.wind, [key === 'windDir' ? 'dir' : 'spd']: num(value) || 0 }; return; }
   r[key] = ['name', 'plannedTakeoff'].includes(key) ? value : num(value);
@@ -106,7 +122,8 @@ function handleAdd(r, list, root) {
   const status = root.querySelector(`[data-add-status="${list}"]`);
   const p = resolvePoint(input.value, { bullseye: state.settings.bullseye, variation: currentVariation().value });
   if (!p) { status.textContent = '地点を特定できません'; return; }
-  addPoint(r, { ...p, name: p.name || `STPT${r[list].length + 1}`, alt: altIn.value === '' ? undefined : Number(altIn.value) }, list);
+  addPoint(r, { ...p, name: p.name || `STPT${r[list].length + 1}`, alt: altIn.value === '' ? undefined : Number(altIn.value) }, list, insertIndex(list));
+  if (selected && selected.list === list && insertMode === 'after') selected.i += 1;
   emit('route');
 }
 
@@ -115,7 +132,8 @@ export function bindRouteTab(el, rerender) {
   el.addEventListener('change', (e) => {
     const t = e.target;
     const r = editingRoute();
-    if (t.id === 'routeSel') { editingRouteId = t.value; editing = null; rerender(); return; }
+    if (t.id === 'routeSel') { editingRouteId = t.value; editing = null; selected = null; rerender(); return; }
+    if (t.dataset.insmode) { insertMode = t.dataset.insmode; return; }
     if (!r) return;
     if (t.dataset.rf) setRouteField(r, t.dataset.rf, t.value);
     else if (t.dataset.pf) setPointField(r[t.dataset.list][Number(t.dataset.i)], t.dataset.pf, t.value);
@@ -129,7 +147,7 @@ export function bindRouteTab(el, rerender) {
     el.querySelector('#ptSuggest').innerHTML = searchPoints(e.target.value).map((p) => `<option value="${esc(p.name)}">${esc(p.label)}</option>`).join('');
   });
   el.addEventListener('click', (e) => {
-    const t = e.target.closest('button');
+    const t = e.target.closest('button, [data-pact="select"]');
     if (!t) return;
     let r = editingRoute();
     const act = t.dataset.ract;
@@ -145,10 +163,18 @@ export function bindRouteTab(el, rerender) {
   });
 }
 
+/* ==== insertIndex ==== 選択行があれば、その前/後の位置。無ければ null（既定：目的地の手前） */
+export function insertIndex(list = 'points') {
+  if (!selected || selected.list !== list) return null;
+  return insertMode === 'before' ? selected.i : selected.i + 1;
+}
+
 function pointAction(r, act, list, i) {
+  if (act === 'select') selected = selected && selected.list === list && selected.i === i ? null : { list, i };
+  if (act === 'active') setActiveIdx(r, i);
   if (act === 'detail') editing = editing && editing.list === list && editing.i === i ? null : { list, i };
   if (act === 'up' || act === 'down') { movePoint(r, i, act === 'up' ? -1 : 1, list); editing = null; }
-  if (act === 'del') { removePoint(r, i, list); editing = null; }
+  if (act === 'del') { removePoint(r, i, list); editing = null; selected = null; }
 }
 
 /* ==== togglePointUnit ==== 速度の単位をタップで切替（その STPT の高度・ISA偏差で換算） */

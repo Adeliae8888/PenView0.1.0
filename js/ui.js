@@ -3,6 +3,9 @@ import { state, updateSettings, currentVariation, emit, switchMode, AIRSPACE_CLA
 import { navBlockHtml } from './ui-nav.js';
 import { activeRoute, newRoute, addPoint, setActiveRoute } from './route.js';
 import { addUserPoint } from './points.js';
+import { insertIndex } from './ui-route.js';
+import { renderNavDataSection, bindNavDataSection, renderIoSection, bindIoSection } from './ui-settings-data.js';
+import { saveRoutes } from './route.js';
 import { now, formatClock } from './clock.js';
 import { COORD_FORMATS, formatLatLon, formatBe, parseCoordinate } from './coords.js';
 import { bearingTrue, distanceNm, toMagnetic, formatBearing, formatVariation } from './geo.js';
@@ -110,11 +113,27 @@ export function renderInfo(hits) {
       <button type="button" class="btn" data-act="upt">ユーザーポイント登録</button>
     </div>
     <div class="row wrap actions">
+      <button type="button" class="btn" data-act="bingo">BINGO 地点に設定</button>
       <button type="button" class="btn" data-act="bull">ブルズアイに設定</button>
       <button type="button" class="btn" data-act="own">自機をここに</button>
     </div>
     <p id="infoStatus" class="muted"></p>`;
   sheet.classList.add('open');
+}
+
+/* ==== renderPickList ==== 近くに複数の地点があるとき、どれを選ぶかのリスト。onPick(候補) */
+export function renderPickList(candidates, raw, onPick) {
+  const sheet = $('infoSheet');
+  sheet.innerHTML = `<div class="sheet-head"><h2>どれを選びますか？</h2><button type="button" class="btn" data-close-info>閉じる</button></div>
+    <div class="pick-list">${candidates.map((c, i) => `<button type="button" class="btn pick-item" data-pick="${i}">${esc(c.label)}</button>`).join('')}
+    <button type="button" class="btn pick-item muted-btn" data-pick="raw">この座標（地点なし）${esc(formatLatLon(raw.lat, raw.lon, state.settings.coordFormat))}</button></div>`;
+  sheet.classList.add('open');
+  sheet.onclick = (e) => {
+    const k = e.target.closest('[data-pick]')?.dataset.pick;
+    if (k === undefined) return;
+    sheet.onclick = null;
+    onPick(k === 'raw' ? null : candidates[Number(k)]);
+  };
 }
 
 /* ==== renderSettings ==== 設定画面の値を現在の状態に合わせる */
@@ -135,6 +154,8 @@ export function renderSettings() {
   $('airspaceToggles').innerHTML = Object.entries(AIRSPACE_CLASSES).map(([k, l]) => chip('asclass', k, l, s.airspaceClasses[k])).join('');
   document.querySelectorAll('input[name="timeZone"]').forEach((r) => { r.checked = r.value === (s.timeZone || 'Z'); });
   $('hackStatus').textContent = `${formatClock(now())}（補正 ${((s.timeOffsetMs || 0) / 1000).toFixed(0)} 秒）`;
+  renderNavDataSection();
+  renderIoSection();
   $('aboutText').textContent = `${self.APP_NAME} ${self.APP_VERSION} · 空域等 OpenAIP（CC BY-NC 4.0, openaip.net）· 陸地 Natural Earth · 偏差 国土地理院 磁気図2020.0年値`;
 }
 
@@ -166,7 +187,7 @@ function bindInfoSheet(actions) {
     if (e.target.closest('[data-close-info]')) { state.selection = null; emit('selection'); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act || !sel) return;
-    if (['stpt', 'direct', 'altn', 'upt'].includes(act)) { pointOption(act, sel); return; }
+    if (['stpt', 'direct', 'altn', 'upt', 'bingo'].includes(act)) { pointOption(act, sel); return; }
     if (act === 'bull') updateSettings({ bullseye: { ...state.settings.bullseye, lat: sel.lat, lon: sel.lon } });
     if (act === 'own') { setManualOwn(sel.lat, sel.lon); updateSettings({ manualOwn: { lat: sel.lat, lon: sel.lon } }); }
     state.selection = null;
@@ -183,13 +204,19 @@ function pointOption(act, sel) {
     const n = $('upNameInfo').value.trim();
     if (!n) { status.textContent = 'ポイント名を入れてください'; return; }
     addUserPoint({ name: n, lat: sel.lat, lon: sel.lon });
+  } else if (act === 'bingo') {
+    const r = activeRoute();
+    if (!r) { status.textContent = 'アクティブなルートがありません'; return; }
+    r.bingoPoint = { name: name || 'BINGO', lat: sel.lat, lon: sel.lon };
+    saveRoutes();
   } else if (act === 'direct') {
     if (!activeRoute()) { status.textContent = 'アクティブなルートがありません'; return; }
     state.directArm = { name: name || `DIR${String(activeRoute().points.length).padStart(2, '0')}`, lat: sel.lat, lon: sel.lon, pointId: sel.pointId };
   } else {
     let r = activeRoute();
     if (!r) { r = newRoute(); setActiveRoute(r.id); }
-    addPoint(r, { name: name || `STPT${r.points.length}`, lat: sel.lat, lon: sel.lon, elev: sel.elev, def: name }, act === 'altn' ? 'alternate' : 'points');
+    const list = act === 'altn' ? 'alternate' : 'points';
+    addPoint(r, { name: name || `STPT${r.points.length}`, lat: sel.lat, lon: sel.lon, elev: sel.elev, def: name }, list, insertIndex(list));
   }
   state.selection = null;
   emit('selection');
@@ -207,6 +234,8 @@ function bindTimeSettings() {
 
 function bindSettingsSheet(actions) {
   bindTimeSettings();
+  bindNavDataSection();
+  bindIoSection();
   $('gpsToggle').addEventListener('click', () => { if (isGpsOn()) stopGps(); else startGps(); renderSettings(); });
   $('simToggle').addEventListener('click', () => {
     if (isSimOn()) { stopSim(); renderSettings(); return; }

@@ -241,3 +241,68 @@ test('ルート編集・自動送り・DIRECT', () => {
   assert.equal(r.activeIdx, 2);
   assert.equal(r.points[3].name, 'B', '続きは元のルート');
 });
+
+import { crossTrackNm } from '../js/geo.js';
+import { parseKml, parseAixm, parsePeriod, parseAltitude } from '../js/kml.js';
+import { classify, effDate, isValidIn } from '../js/navdata.js';
+import { setActiveIdx } from '../js/route.js';
+
+test('横ずれ（XTK）：右が正', () => {
+  const a = { lat: 36, lon: 140 };
+  const b = { lat: 37, lon: 140 };     // 真北へのコース
+  near(crossTrackNm(a, b, destination({ lat: 36.5, lon: 140 }, 90, 2)), 2, 0.01, '東に2nm＝右');
+  near(crossTrackNm(a, b, destination({ lat: 36.5, lon: 140 }, 270, 3.5)), -3.5, 0.01, '西に3.5nm＝左');
+});
+
+test('KML・NOTAM・期間・高度の解析', () => {
+  const kml = `<kml><Placemark><name/><description><![CDATA[<table><tr><td>DESIGNATOR</td><td>Y111</td></tr><tr><td>MEA</td><td>FL270</td></tr></table>]]></description>
+    <MultiGeometry><LineString><coordinates> 139.1,35.1,0 139.2,35.2,0</coordinates></LineString></MultiGeometry></Placemark>
+    <Placemark><name>MENOU</name><Point><coordinates>140.5,36.5,0</coordinates></Point></Placemark>
+    <Placemark><Polygon><outerBoundaryIs><LinearRing><coordinates>1,1 2,1 2,2 1,1</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></kml>`;
+  const f = parseKml(kml);
+  assert.deepEqual(f.map((x) => x.kind), ['line', 'point', 'area']);
+  assert.equal(f[0].attrs.DESIGNATOR, 'Y111');
+  assert.deepEqual(f[1].p, [140.5, 36.5]);
+  const aixm = `<message:AIXMBasicMessage><aixm:Airspace gml:id="x"><aixm:upperLimit uom="FT">9843</aixm:upperLimit><aixm:lowerLimit uom="FT">GND</aixm:lowerLimit>
+    <gml:CircleByCenterPoint numArc="1"><gml:pos>35.5 139.5</gml:pos><gml:radius uom="m">1852</gml:radius></gml:CircleByCenterPoint></aixm:Airspace>
+    <event:series>U</event:series><event:number>3146</event:number><event:year>2026</event:year>
+    <event:effectiveStart>2026-11-10T00:00:00Z</event:effectiveStart><event:effectiveEnd>2026-11-11T00:00:00Z</event:effectiveEnd><event:text>TEST</event:text></message:AIXMBasicMessage>`;
+  const n = parseAixm(aixm);
+  assert.equal(n.length, 1);
+  assert.equal(n[0].name, 'U3146/26');
+  assert.equal(n[0].attrs.UPPER, '9843FT');
+  near(distanceNm({ lat: 35.5, lon: 139.5 }, { lat: n[0].g[0][1], lon: n[0].g[0][0] }), 1, 0.001, '円の半径 1852m=1nm（緯度・経度の順を確認）');
+  assert.equal(n[0].valid.to - n[0].valid.from, 86400000);
+  assert.deepEqual(parsePeriod('From 1500UTC 30 SEP 2026 to 1500UTC 29 SEP 2027.'), { from: Date.UTC(2026, 8, 30, 15), to: Date.UTC(2027, 8, 29, 15) });
+  assert.equal(parsePeriod('by NOTAM'), null);
+  assert.equal(parseAltitude('FL230').ft, 23000);
+  assert.equal(parseAltitude('UNL').ft, Infinity);
+  assert.equal(parseAltitude('11000FT').ft, 11000);
+});
+
+test('NAV データの分類・有効日・有効期間', () => {
+  assert.equal(classify('3_AIP(Shapefile, KML)/20261029/KML_20261029/JSDF_training_and_testing_areas_HIGH_EFF20261029.kml'), 'aip-jsdf');
+  assert.equal(classify('3_AIP(Shapefile, KML)/x/Supersonic_flight_area_EFF20261029.kml'), 'aip-other-area');
+  assert.equal(classify('4_SUP(KML)/RADIO NAVIGATION AIDS/26_132_Ashiya_TACAN_(AHT)/SUP_132_26_Unserviceability(NAVAID).kml'), 'sup-navaid');
+  assert.equal(classify('4_SUP(KML)/Airspace/2026/SUP_200_26_Establishment of temporary training areas (Hyakuri).kml'), 'sup-airspace');
+  assert.equal(classify('5_OBSTACLE DATA/1.AREA1/AREA1_20261029.kml/AREA1/AREA1_13_TOKYO_20261029.kml'), 'obs-area1');
+  assert.equal(classify('x.xml', 'airspace'), 'notam-airspace');
+  assert.equal(effDate('RNAV_ROUTES_EFF20261029.kml'), Date.UTC(2026, 9, 29));
+  const it = { v: { from: 100, to: 200 } };
+  assert.ok(isValidIn(it, { start: 150, end: 150 }));
+  assert.ok(!isValidIn(it, { start: 201, end: 300 }), '期間後は出さない');
+  assert.ok(isValidIn(it, { start: 0, end: 100 }), '時間帯の終わりに始まるものは出す');
+  assert.ok(isValidIn({ v: null }, { start: 0, end: 1 }), '期間不明は常に出す');
+});
+
+test('選択行の前後に挿入・アクティブの直接指定', () => {
+  const r = newRoute('INS');
+  ['DEP', 'A', 'B', 'DST'].forEach((n, i) => addPoint(r, { name: n, lat: 36, lon: 140 + i * 0.1 }));
+  const before = r.points.map((p) => p.name);
+  addPoint(r, { name: 'X', lat: 36, lon: 140.05 }, 'points', 1);          // 1番目の前
+  assert.deepEqual(r.points.map((p) => p.name), [before[0], 'X', ...before.slice(1)]);
+  setActiveIdx(r, 3);
+  assert.equal(r.activeIdx, 3);
+  addPoint(r, { name: 'Y', lat: 36, lon: 140.07 }, 'points', 2);          // アクティブより前に入れてもアクティブの点は同じ
+  assert.equal(r.points[r.activeIdx].name, before[2]);
+});

@@ -77,11 +77,13 @@ export function switchMode(mode) {
   if (mode === s.mode) return;
   const byMode = s.layersByMode || {};
   byMode[s.mode] = { layers: { ...s.layers }, airspaceClasses: { ...s.airspaceClasses } };
+  // 初めてのモード：基本レイヤーは引き継ぎ、読み込みデータ（nd:*）はそのモードの既定値に任せる
+  const base = Object.fromEntries(Object.entries(s.layers).filter(([k]) => !k.startsWith('nd:')));
   const next = byMode[mode] || {
-    layers: { ...s.layers, ...Object.fromEntries(TAC_DEFAULT_OFF.map((k) => [k, mode !== 'TAC' && s.layers[k]])) },
+    layers: { ...base, ...Object.fromEntries(TAC_DEFAULT_OFF.map((k) => [k, mode !== 'TAC' && s.layers[k]])) },
     airspaceClasses: { ...s.airspaceClasses },
   };
-  updateSettings({ mode, layersByMode: byMode, layers: { ...s.layers, ...next.layers }, airspaceClasses: { ...s.airspaceClasses, ...next.airspaceClasses } });
+  updateSettings({ mode, layersByMode: byMode, layers: { ...DEFAULT_SETTINGS.layers, ...next.layers }, airspaceClasses: { ...s.airspaceClasses, ...next.airspaceClasses } });
 }
 
 /* ==== currentVariation ==== 使用中の偏差（度, W=負）と出所 */

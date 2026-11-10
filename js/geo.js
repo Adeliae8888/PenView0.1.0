@@ -78,6 +78,14 @@ export function formatBearing(deg) {
   return String(Math.round(norm360(deg)) % 360).padStart(3, '0');
 }
 
+/* ==== crossTrackNm ==== 大圏コース a→b に対する p の横ずれ（nm）。正＝コースの右 */
+export function crossTrackNm(a, b, p) {
+  const d13 = distanceNm(a, p) / EARTH_RADIUS_NM;
+  const t13 = bearingTrue(a, p) * RAD;
+  const t12 = bearingTrue(a, b) * RAD;
+  return Math.asin(Math.sin(d13) * Math.sin(t13 - t12)) * EARTH_RADIUS_NM;
+}
+
 /* ==== pointInRing ==== 経緯度の多角形内判定（ring は [lon, lat] 配列） */
 export function pointInRing(lon, lat, ring) {
   let inside = false;
