@@ -335,3 +335,8 @@ table.pts td.pick { cursor: pointer; }
 .part-card input[type="number"] { width: 88px; }
 .palette { margin: 6px 0 12px; }
 ul.warn { margin: 6px 0; padding-left: 18px; }
+/* 0.2.3 ルートで選んだ手順：航法中の区間はアクティブ区間の色で太く */
+#overlay .proc-line.active { stroke: #e879f9; stroke-width: 3.5; }
+.dp-actions .btn.warn-btn { background: #7c2d12; border-color: #f97316; color: #fff; font-weight: 800; letter-spacing: 0.05em; }
+.dp-fuel .divert.bad { color: var(--danger); }
+.dp-fuel small { font-size: 11px; color: var(--muted); font-weight: 600; }

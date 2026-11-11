@@ -56,12 +56,12 @@ function labelSvg(view, proc, l) {
   return leader + out;
 }
 
-/* ==== drawProcedures ==== 表示する手順をすべて描く。editingId の手順は強調 */
-export function drawProcedures(view, procs, ctx, editingId) {
+/* ==== drawProcedures ==== 表示する手順をすべて描く。editingId の手順は強調、activePartId（航法中の区間）は航法色で太く */
+export function drawProcedures(view, procs, ctx, editingId, activePartId = null) {
   return procs.map((proc) => {
     const r = built(proc, ctx);
     const cls = `proc${proc.id === editingId ? ' editing' : ''} proc-${proc.type.toLowerCase()}`;
-    let out = r.segments.map((sg) => `<path class="proc-line${sg.dashed ? ' missed' : ''}${sg.turn ? ' turn' : ''}" d="${polyline(view, sg.pts)}"/>`).join('');
+    let out = r.segments.map((sg) => `<path class="proc-line${sg.dashed ? ' missed' : ''}${sg.turn ? ' turn' : ''}${activePartId && sg.partId === activePartId ? ' active' : ''}" d="${polyline(view, sg.pts)}"/>`).join('');
     r.fixes.forEach((f) => { const p = view.geoToScreen(f.lat, f.lon); out += `<path class="proc-fixmark" d="M${p.x.toFixed(1)} ${(p.y - 5).toFixed(1)}l4.5 8h-9Z"/>`; });
     if (r.start) {
       const p = view.geoToScreen(r.start.lat, r.start.lon);

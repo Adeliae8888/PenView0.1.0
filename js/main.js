@@ -1,5 +1,5 @@
 /* ==== main.js ==== 起動と全体の配線：設定読込 → データ読込 → 地図構築 → UI 結線 → Service Worker 登録 */
-import { state, on, loadSettings, currentVariation, updateSettings, SETTINGS_KEY } from './state.js';
+import { state, on, emit, loadSettings, currentVariation, updateSettings, SETTINGS_KEY } from './state.js';
 import { setStoreErrorHandler, requestPersistence, saveLater } from './store.js';
 import { createProjection } from './projection.js';
 import { createView, attachGestures } from './map-view.js';
@@ -18,7 +18,7 @@ import { renderRouteTab, bindRouteTab, renderLogTab } from './ui-route.js';
 import { renderAircraftTab, bindAircraftTab, renderPointsTab, bindPointsTab } from './ui-data.js';
 import { renderProcTab, bindProcTab, fillFromMap } from './ui-proc.js';
 import { loadProcedures } from './procedures.js';
-import { procSvg, bindLabelDrag, bumpProcContext } from './proc-wire.js';
+import { procSvg, bindLabelDrag, bumpProcContext, syncProcRoutes } from './proc-wire.js';
 import { initAndroid } from './android.js';
 
 const $ = (id) => document.getElementById(id);
@@ -184,9 +184,9 @@ function wireEvents() {
     zoomAnchor: followAnchor,
   });
   on('own', (own) => { onOwnUpdate(own); applyOrientation(); renderDataPanel(); requestDraw(); });
-  on('route', () => { bumpProcContext(); renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
-  on('navdata', () => { refreshCatalog(); refreshNavGeo(true); requestDraw(); });
-  on('proc', requestDraw);
+  on('route', () => { bumpProcContext(); syncProcRoutes(); renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
+  on('navdata', () => { refreshCatalog(); refreshNavGeo(true); if (syncProcRoutes()) emit('route'); requestDraw(); });
+  on('proc', () => { if (syncProcRoutes()) emit('route'); requestDraw(); });   // 手順の作図を直したら、それを使うルートの点も直す
   on('toEditor', (text) => { if (fillFromMap(text)) openSheet('proc'); });
   bindLabelDrag($('map'), requestDraw);
   $('compass').addEventListener('click', () => updateSettings({ follow: false }));
@@ -233,6 +233,7 @@ async function boot() {
   buildGeoLayer($('geo'), proj, state.data);
   refreshCatalog();
   refreshNavGeo(true);
+  syncProcRoutes();
   bindUi({
     zoom: (f) => {
       const a = followAnchor() || { x: view.width / 2, y: view.height / 2 };

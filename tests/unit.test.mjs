@@ -375,3 +375,124 @@ test('エディター：SID を組み立てる（針路で上昇→旋回→ラ�
   assert.equal(fixLabel.alt.type, 'at');
   assert.match(r.labels.find((l) => l.partId === 'b' && l.which === 'course').text, /^HUC R-060 \d+\.\d$/);
 });
+
+/* ==== 0.2.3 手順のルート連携 ==== */
+import { syncRouteProcs, missedPoints, fixAlt, procChoices, approachPhase } from '../js/route-proc.js';
+import { executeMissed, executeDivert, resetFlight, pointTag } from '../js/route.js';
+import { divertNeed } from '../js/flightplan.js';
+
+const SID_ARC = {
+  id: 'sid1', type: 'SID', ad: 'RJAH', rwy: '03', parts: [
+    { id: 'a', type: 'heading', hdg: 37, end: { type: 'alt', alt: 2105, grad: 3.3 } },
+    { id: 'b', type: 'radial', station: 'HUC', radial: 60, end: { type: 'dme', dist: 20 }, alt: { type: 'above', v: 5000 } },
+    { id: 'c', type: 'arc', station: 'HUC', dme: 20, to: 90, dir: 'R' },
+    { id: 'd', type: 'tf', to: 'MENOU', alt: { type: 'at', v: 13000 } },
+  ],
+};
+const APP1 = {
+  id: 'app1', type: 'APP', ad: 'RJAH', name: 'ILS', startFix: 'GOT', startAlt: 6000,
+  parts: [{ id: 'f1', type: 'tf', to: 'HUC R-330 D10', alt: { type: 'at', v: 3000 } }, { id: 'f2', type: 'tf', to: 'HUC R-330 D2', alt: { type: 'at', v: 800 } }],
+  missed: [{ id: 'm1', type: 'radial', station: 'HUC', radial: 150, end: { type: 'dme', dist: 10 }, alt: { type: 'at', v: 4000 } }],
+};
+const PROCS = { sid1: SID_ARC, app1: APP1 };
+const getProc = (id) => PROCS[id] || null;
+const build = (p) => buildProcedure(p, PCTX);
+const procRoute = () => ({
+  points: [
+    { id: 'dep', name: 'RJAH', lat: 36.1811, lon: 140.415, alt: 105 },
+    { id: 'mid', name: 'MID', ...destination(ST.MENOU, 90, 60), alt: 20000 },
+    { id: 'dst', name: 'RJAH', lat: 36.1811, lon: 140.415, alt: 105, legAlt: 20000 },
+  ],
+  alternate: [{ id: 'alt', name: 'ALTN', ...destination(DEP, 0, 120), alt: 50, legAlt: 20000 }],
+  activeIdx: 1, cruiseAlt: 20000, procs: { SID: 'sid1', STAR: null, APP: 'app1' }, flight: { takeoffAt: null, checks: [], directOrigin: null },
+});
+
+test('手順の実距離：DME アークは弧の長さ（r×角度）、旋回なしの直線は大圏距離', () => {
+  const r = buildProcedure(SID_ARC, PCTX);
+  // 弧の長さ = 半径 × 中心角。中心角は HUC から見たアークの始点（前のフィックス）→ 終点（R-090＝真方位083）
+  const sweep = (bearingTrue(ST.HUC, r.fixes[2]) - bearingTrue(ST.HUC, r.fixes[1]) + 360) % 360;
+  near(r.fixes[2].pathNm, 20 * sweep * Math.PI / 180, 0.02, '20DME の弧の長さ');
+  near(r.fixes[3].pathNm, distanceNm(r.fixes[2], r.fixes[3]), 1e-6, '直線');
+  near(r.fixes[0].pathNm, distanceNm(r.start, r.fixes[0]), 1e-6, '最初は滑走路端から');
+});
+
+test('手順の高度：高度で終わるレグ・制限・SID の「以上」・制限なし', () => {
+  assert.equal(fixAlt({ altEnd: 2105 }, 'SID', 105, 20000), 2105);
+  assert.equal(fixAlt({ altC: { type: 'above', v: 5000 } }, 'SID', 2105, 20000), 20000, 'SID の以上は巡航まで上がってよい');
+  assert.equal(fixAlt({ altC: { type: 'above', v: 5000 } }, 'STAR', 20000, 20000), 5000);
+  assert.equal(fixAlt({ altC: { type: 'between', v: 9000, v2: 7000 } }, 'STAR', 20000, 20000), 7000, 'STAR の範囲は下の値');
+  assert.equal(fixAlt({ altC: null }, 'SID', 105, 20000), 20000, 'SID の制限なし＝巡航高度');
+  assert.equal(fixAlt({ altC: null }, 'APP', 6000, 20000), 6000, 'APP の制限なし＝前の点');
+});
+
+test('手順をルートに展開：並び・印・実距離・同期で利用者の入力とアクティブが残る', () => {
+  const r = procRoute();
+  assert.deepEqual(procChoices(r, 'SID', Object.values(PROCS)).map((p) => p.id), ['sid1']);
+  assert.ok(syncRouteProcs(r, getProc, build));
+  assert.deepEqual(r.points.map((p) => p.mark || p.id), ['dep', 'SID', 'SID', 'SID', 'SID', 'mid', 'APP', 'APP', 'APP', 'dst']);
+  assert.equal(pointTag(r.points, 2), '2 SID');
+  assert.equal(pointTag(r.points, 9), 'DST');
+  near(r.points[1].pathNm, distanceNm(r.points[0], buildProcedure(SID_ARC, PCTX).start) + buildProcedure(SID_ARC, PCTX).fixes[0].pathNm, 1e-6, 'SID の最初は標点→滑走路端を足す');
+  assert.deepEqual(r.points.slice(1, 5).map((p) => p.alt), [2105, 20000, 20000, 13000]);
+  assert.equal(r.points[6].name, 'GOT');
+  assert.equal(r.points[6].alt, 6000);
+  // 実距離で計算される：アークの区間は直線距離より長い
+  const plan = computePlan(r, CFG);
+  const arcLeg = plan.legs.find((l) => l.toIndex === 3);
+  assert.ok(arcLeg.dist > distanceNm(r.points[2], r.points[3]) + 0.05, 'アークは弦より長い');
+  // 同期し直しても変わらない／利用者の TOS は残る／アクティブの点を保つ
+  assert.equal(syncRouteProcs(r, getProc, build), false);
+  r.points[4].tos = '0130';
+  r.activeIdx = 5;
+  SID_ARC.parts[3].alt = { type: 'at', v: 15000 };
+  assert.ok(syncRouteProcs(r, getProc, build));
+  assert.equal(r.points[4].alt, 15000);
+  assert.equal(r.points[4].tos, '0130');
+  assert.equal(r.points[r.activeIdx].id, 'mid');
+  SID_ARC.parts[3].alt = { type: 'at', v: 13000 };
+  // 手順を外すと点も消える
+  r.procs.SID = null;
+  syncRouteProcs(r, getProc, build);
+  assert.deepEqual(r.points.map((p) => p.mark || p.id), ['dep', 'mid', 'APP', 'APP', 'APP', 'dst']);
+  assert.equal(r.points[r.activeIdx].id, 'mid');
+});
+
+test('MISSED APP → 復行の点、DIVERT は手動、リセットで計画に戻る', () => {
+  const r = procRoute();
+  syncRouteProcs(r, getProc, build);
+  const before = structuredClone(r.points);
+  r.activeIdx = r.points.length - 2;          // 最後の APP の点を飛行中
+  assert.ok(approachPhase(r));
+  const ma = missedPoints(r, getProc, build);
+  assert.equal(ma.length, 1);
+  assert.equal(ma[0].mark, 'MA');
+  near(distanceNm(ST.HUC, ma[0]), 10, 0.01, '復行 HUC R-150 D10');
+  assert.ok(executeMissed(r, ma));
+  assert.equal(r.points[r.activeIdx].mark, 'MA');
+  assert.equal(pointTag(r.points, r.points.length - 2), 'DST', '元の目的地は DST のまま');
+  assert.ok(r.points.at(-2).skipped, '目的地には降りていない');
+  assert.equal(r.alternate.length, 1, '代替経路へは自動で向けない');
+  assert.equal(syncRouteProcs(r, getProc, build), false, '復行後は同期しない');
+  // DIVERT の必要燃料：現在位置から代替飛行場までの燃料＋進入着陸＋予備（独立に区間計算した値と一致）
+  const own = { lat: ma[0].lat, lon: ma[0].lon, alt: 4000 };
+  const need = divertNeed(r, CFG, own);
+  const leg = computeLeg(own, r.alternate[0], CFG, { wind: null, dev: 0, direct: true });
+  near(need.need, leg.fuel + 600 + 1500, 1e-6, 'DIV = 区間燃料 + 進入着陸 600 + 予備 1500');
+  assert.ok(executeDivert(r, own));
+  assert.equal(r.points[r.activeIdx].name, 'ALTN');
+  assert.equal(pointTag(r.points, r.activeIdx), 'ALT');
+  assert.equal(r.alternate.length, 0);
+  assert.deepEqual(r.flight.directOrigin, { lat: own.lat, lon: own.lon, name: 'DIV' });
+  resetFlight(r);
+  assert.deepEqual(r.points.map((p) => p.id), before.map((p) => p.id), 'リセットで元の並び');
+  assert.equal(r.alternate.length, 1);
+  assert.ok(!r.points.some((p) => p.role || p.skipped));
+  assert.equal(r.flight.missed, undefined);
+});
+
+test('同じ基地へ戻るルート：目的地の飛行場名は DEP の点ではなく飛行場として引く（標高を保つ）', () => {
+  setPointSources({ airports: [{ icao: 'RJAH', n: 'HYAKURI', elev: 105, p: [140.415, 36.1811] }], navaids: [], routePoints: () => [{ name: 'RJAH', lat: 36.1811, lon: 140.415, alt: 105 }] });
+  const p = resolvePoint('RJAH');
+  assert.equal(p.elev, 105);
+  setPointSources({ airports: [], navaids: [], routePoints: () => [] });
+});

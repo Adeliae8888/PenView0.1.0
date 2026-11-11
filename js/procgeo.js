@@ -223,7 +223,7 @@ function buildLegs(parts, start, ctx, out, dashed) {
     const midB = g.pts.length === 2 ? destination(g.pts[0], bearingTrue(g.pts[0], g.pts[1]), distanceNm(g.pts[0], g.pts[1]) / 2) : mid;
     out.labels.push({ ...midB, kind: 'course', text: courseLabel(part, g), partId: part.id, which: 'course', off: part.lbl2 });
     out.labels.push({ ...g.end, kind: 'fix', text: part.name || g.endName || '', alt: part.alt, speed: part.speed, altEst: Math.round(cur.alt), partId: part.id, which: 'fix', off: part.lbl });
-    out.fixes.push({ ...g.end, name: part.name || g.endName || '' });
+    out.fixes.push({ ...g.end, name: part.name || g.endName || '', partId: part.id, missed: dashed, altC: part.alt || null, altEnd: Number.isFinite(g.endAlt) ? g.endAlt : null });
     prevGeom = g;
     cur = { p: g.end, alt: cur.alt, c: g.c1 };
   });
@@ -253,5 +253,29 @@ export function buildProcedure(proc, ctx) {
   if (proc.type === 'APP' && proc.missed?.length) {
     buildLegs(proc.missed, { ...main.cur, geom: main.prevGeom }, ctx, out, true);
   }
+  annotatePath(out);
   return out;
+}
+
+function polyLenNm(pts) {
+  let d = 0;
+  for (let i = 1; i < pts.length; i += 1) d += distanceNm(pts[i - 1], pts[i]);
+  return d;
+}
+
+/* ==== annotatePath ==== 各フィックスに、前のフィックス（最初は開始点）からの実際の飛行距離 pathNm（旋回・アークを含む）を付ける
+ * 旋回で直線が切り詰められるので、全パーツを組み立て終えてから測る */
+function annotatePath(out) {
+  const cumAt = {};
+  let cum = 0;
+  out.segments.forEach((sg) => {
+    cum += polyLenNm(sg.pts);
+    if (sg.partId) cumAt[sg.partId] = cum;
+  });
+  let prev = 0;
+  out.fixes.forEach((f) => {
+    const c = cumAt[f.partId];
+    f.pathNm = Number.isFinite(c) ? Math.max(0, c - prev) : null;
+    if (Number.isFinite(c)) prev = c;
+  });
 }

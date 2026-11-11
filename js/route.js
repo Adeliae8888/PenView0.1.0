@@ -37,7 +37,7 @@ export function setActiveRoute(id) {
 export function newRoute(name = `ROUTE ${store.routes.length + 1}`) {
   const r = {
     id: uid('rt'), name, points: [], alternate: [], activeIdx: 1, configRef: null, startFuel: null, joker: null, bingo: null,
-    plannedTakeoff: null, wind: null, isaDev: 0, cruiseAlt: DEFAULT_CRUISE_ALT, bingoPoint: null, homeBingo: null, homeBingoPointId: null, flight: { takeoffAt: null, checks: [], directOrigin: null },
+    plannedTakeoff: null, wind: null, isaDev: 0, cruiseAlt: DEFAULT_CRUISE_ALT, bingoPoint: null, homeBingo: null, homeBingoPointId: null, procs: { SID: null, STAR: null, APP: null }, flight: { takeoffAt: null, checks: [], directOrigin: null },
   };
   store.routes.push(r);
   if (!store.activeId) store.activeId = r.id;
@@ -77,7 +77,10 @@ export function addPoint(route, src, list = 'points', index = null) {
     const i = Math.max(0, Math.min(arr.length, index));
     arr.splice(i, 0, p);
     if (list === 'points' && i <= route.activeIdx && arr.length > 2) route.activeIdx += 1;   // アクティブの点は変えない
-  } else if (list === 'points' && arr.length >= 2) arr.splice(arr.length - 1, 0, p); else arr.push(p);
+  } else if (list === 'points' && arr.length >= 2) {
+    const arrival = arr.findIndex((q) => q.proc && q.proc.role !== 'SID');   // STAR・APP があればその手前
+    arr.splice(arrival > 0 ? arrival : arr.length - 1, 0, p);
+  } else arr.push(p);
   saveRoutes();
   return p;
 }
@@ -166,8 +169,50 @@ export function recordTakeoff(route, at) {
   return true;
 }
 
-/* ==== resetFlight ==== 実績（離陸時刻・燃料チェック・DIRECT）を消して計画に戻す */
+/* ==== executeMissed ==== MISSED APP：復行の点を目的地の後ろに足してアクティブにする。目的地と未通過の点は飛ばす
+ * 代替飛行場へは向けない（DIVERT を押したときだけ）。元の計画は flight.planned に取っておき、リセットで戻す */
+export function executeMissed(route, missedPts) {
+  if (!missedPts.length || route.flight.missed) return false;
+  route.flight.planned = structuredClone({ points: route.points, alternate: route.alternate, activeIdx: route.activeIdx });
+  const dst = route.points.length - 1;
+  route.points[dst].role = 'dst';
+  route.points.forEach((p, i) => { if (i >= route.activeIdx) p.skipped = true; });
+  route.points.push(...missedPts.map((p) => ({ ...structuredClone(p), skipped: false })));
+  route.activeIdx = dst + 1;
+  route.flight.directOrigin = null;
+  route.flight.missed = { at: Date.now() };
+  saveRoutes();
+  return true;
+}
+
+/* ==== executeDivert ==== DIVERT：現在位置から代替経路（A1 … ALT）へ。代替経路の点を主経路の後ろに移し、代替飛行場が新しい行き先になる */
+export function executeDivert(route, own) {
+  if (!route.alternate?.length || route.flight.diverted || !Number.isFinite(own?.lat)) return false;
+  if (!route.flight.planned) route.flight.planned = structuredClone({ points: route.points, alternate: route.alternate, activeIdx: route.activeIdx });
+  const start = route.points.length;
+  route.points.forEach((p, i) => { if (i >= route.activeIdx) p.skipped = true; });
+  route.alternate.forEach((p, i, arr) => route.points.push({ ...structuredClone(p), id: uid('pt'), mark: i === arr.length - 1 ? 'ALT' : 'A', skipped: false }));
+  route.alternate = [];
+  route.activeIdx = start;
+  route.flight.directOrigin = { lat: own.lat, lon: own.lon, name: 'DIV' };
+  route.flight.diverted = { at: Date.now() };
+  saveRoutes();
+  return true;
+}
+
+/* ==== pointTag ==== 経路の点の表示名：DEP／DST／ALT／番号（手順の点は「2 SID」のように印つき） */
+export function pointTag(points, i) {
+  const p = points[i];
+  if (i === 0) return 'DEP';
+  if (p?.role === 'dst') return 'DST';
+  if (p?.mark === 'ALT') return 'ALT';
+  if (i === points.length - 1 && !p?.mark) return 'DST';
+  return p?.mark ? `${i} ${p.mark}` : String(i);
+}
+
+/* ==== resetFlight ==== 実績（離陸時刻・燃料チェック・DIRECT・復行・DIVERT）を消して計画に戻す */
 export function resetFlight(route) {
+  if (route.flight?.planned) Object.assign(route, route.flight.planned);
   route.flight = { takeoffAt: null, checks: [], directOrigin: null };
   route.points.forEach((p) => { p.skipped = false; });
   route.activeIdx = 1;

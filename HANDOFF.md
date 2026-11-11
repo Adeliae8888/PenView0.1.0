@@ -1,3 +1,43 @@
+# HANDOFF 0.2.3（2026-11-11 パブリッシュ）
+
+## できたこと（ユーザー決定は SPEC.md §8「0.2.3 の決定」）
+- **手順のルート連携**：ROUTE の編集で、DEP の飛行場に SID、DST の飛行場に STAR・APP があれば選択欄が出る。選ぶとフィックスが STPT として入る（DEP → SID → 経路 → STAR → APP → DST）。印「2 SID」等。手順の点は ↑↓× なし（「手順」表示。外すには手順を「なし」に）
+  - 点の id は手順＋パーツから決まる（`pp-<手順id>-<パーツid>`）。作図を直すと自動で入れ直し、TOS・風・速度などの入力とアクティブ STPT は保つ。飛行中（離陸記録後）は自動では入れ直さない（ルートで選び直したときだけ）
+  - 名前の無いフィックスは「2105FT」（高度で終わるレグ）または「手順名-番号」
+  - 高度：高度で終わるレグ・高度制限を使う。制限なしは SID＝既定高度、STAR/APP＝前の点。SID の「以上」は既定高度まで、範囲は SID＝上・STAR/APP＝下
+  - 経路の追加（選択行なし）は STAR/APP の手前に入る
+- **燃料**：手順の点は `pathNm`（作図の旋回・アーク込みの実距離）で区間計算。DIRECT の直行線では使わない
+- **地図**：NAV ではルートで選んだ手順を、手順レイヤーや手順の表示設定に関わらず描く。手順の区間はルートの直線を引かず、航法中の区間は手順の線を紫で強調。TAC では手順を描かず、ルートは全区間直線
+- **MISSED APP**：APP（復行あり）を選び、アクティブが APP の点か目的地のとき NAV パネルにボタン。押すと復行の点（MA）を目的地の後ろに足してアクティブに。目的地と未通過の点は飛ばし扱い。代替経路へは自動で向けない
+- **DIV**：復行中は燃料欄が「EST / DIV（@代替飛行場）」に変わる。DIV＝現在位置から代替経路で代替飛行場までの燃料＋進入着陸＋予備。EST が下回ると赤（点滅はしない）。HOME BINGO は復行中は判定しない
+- **DIVERT**：復行中・代替経路ありでボタン。押すと現在位置から A1 … ALT へ直行開始（行き先が代替飛行場に）。以後の判定は「MIN」＝代替飛行場接地時に予備燃料
+- 「飛行実績をリセット」で復行・DIVERT 前の計画に戻る（flight.planned）
+- **既存の不具合の修正**：同じ基地へ戻るルートで、目的地の飛行場名（例 RJAH）が DEP の STPT として引かれ、標高を失って既定高度になっていた → 飛行場と同名の STPT は地点検索から除く（points.js allPoints）
+
+## ファイル
+| ファイル | 変更 |
+|---|---|
+| js/route-proc.js（新規） | 選べる手順、手順 → STPT の展開、再同期、復行の点、進入中の判定（DOM に依存しない） |
+| js/procgeo.js | fixes に partId・missed・altC・altEnd・pathNm（annotatePath） |
+| js/route.js | procs 欄、executeMissed、executeDivert、pointTag、resetFlight で計画に戻す、addPoint の既定位置 |
+| js/flightplan.js | computeLeg の pathNm、divertNeed |
+| js/nav.js | fuelGates（復行中・DIVERT 後）、liveNav の divert |
+| js/proc-wire.js | syncProcRoutes、routeMissedPoints、ルートで選んだ手順の描画と強調 |
+| js/map-render.js | drawRoute（手順の区間は直線なし・pointTag）、legsD |
+| js/ui-route.js / ui-nav.js | 手順の選択欄・印 ／ MISSED APP・DIVERT・DIV |
+| js/main.js / sw.js / css | 起動・route・proc・navdata で同期 ／ APP_SHELL に route-proc.js ／ ボタンと強調の色 |
+
+## 検証
+- 単体 26/26（新規 5：アークの実距離＝半径×中心角、手順の高度、展開・同期・利用者入力の保持、MISSED→DIV→DIVERT→リセット、同じ基地へ戻るルート）
+- 画面 tests/e2e-route-proc.mjs（新規）：RJAH SID（針路→ラジアル→20DME アーク）＋APP（復行つき）、ルート RJAH → HUC 360/40 → RJAH（代替 RJSK）。並びと印、GOT は APP の手前に入る、アーク区間 27.56nm（弦 25.44nm）、手順の表示 OFF でも描く、航法中の区間の強調、MISSED APP → 10 MA MAHF、復行の終点でも代替へ向けない、DIV 表示＝独立計算 3,774 と一致、DIVERT → ALT RJSK、リセット、再読込で残る、TAC で手順なし。エラー 0
+- 既存 e2e・e2e-nav・e2e-proc も再実行しエラー 0。e2e-data は国土交通省 zip が手元に無く未実行
+- FUNCTIONS：349 → 372（増：annotatePath, polyLenNm, approachPhase, destPoint, expandProc, expandRole, fixAlt, missedPoints, nextPoints, procChoices, procPoint, syncRouteProcs, divertNeed, executeDivert, executeMissed, pointTag, fuelHtml, phaseButtons, legsD, procFields, routeMissedPoints, routeProcIds, syncProcRoutes／減：なし）。60 行超は createView のみ
+
+## 残り（0.2.4 へ持ち越し）
+- Android タブレット実機での確認結果の反映（未受領）
+
+---
+
 # HANDOFF 0.2.2（2026-11-11）
 
 ## 0. 次の冒頭プロンプト（コピー用）

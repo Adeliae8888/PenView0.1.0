@@ -55,9 +55,10 @@ function autoSegments(from, to, dist, course, cfg, w, dev, warn) {
   return { segs, toc, top };
 }
 
-/* ==== computeLeg ==== 1区間。to.phase で手動上書き（auto 以外なら区間全体をその飛行段階で計算） */
-export function computeLeg(from, to, cfg, { wind, dev = 0 } = {}) {
-  const dist = distanceNm(from, to);
+/* ==== computeLeg ==== 1区間。to.phase で手動上書き（auto 以外なら区間全体をその飛行段階で計算）
+ * 手順の点は to.pathNm（作図の旋回・アークを含む実距離）を使う。DIRECT の直行線では使わない */
+export function computeLeg(from, to, cfg, { wind, dev = 0, direct = false } = {}) {
+  const dist = !direct && Number.isFinite(to.pathNm) ? to.pathNm : distanceNm(from, to);
   const course = bearingTrue(from, to);
   const w = to.wind || wind;
   const phase = to.phase && to.phase !== 'auto' ? to.phase : null;
@@ -92,7 +93,7 @@ function computeChain(points, cfg, opts, startFuel, origins = {}) {
   for (let i = 1; i < points.length; i += 1) {
     const to = points[i];
     const from = origins[to.index] ? { ...origins[to.index], alt: points[i - 1].alt } : points[i - 1];
-    const leg = computeLeg(from, to, cfg, opts);
+    const leg = computeLeg(from, to, cfg, { ...opts, direct: !!origins[to.index] });
     fuel -= leg.fuel;
     time += leg.time;
     legs.push({ ...leg, fromIndex: points[i - 1].index, toIndex: to.index, name: to.name, alt: to.alt, cumTime: time, fuelRem: fuel, direct: !!origins[to.index] });
@@ -136,6 +137,17 @@ export function computePlan(route, cfg) {
     result.altTime = alt.time;
   }
   return result;
+}
+
+/* ==== divertNeed ==== 復行後：現在位置から代替経路（A1 … ALT）で代替飛行場へ向かい、接地後に予備燃料（機種の最低燃料）を残すために
+ * 今、持っているべき燃料 = 途中の燃料 + 進入・着陸 + 予備。代替経路が無ければ null */
+export function divertNeed(route, cfg, own) {
+  if (!route.alternate?.length || missingPerf(cfg).length || !Number.isFinite(own?.lat)) return null;
+  const alt = Number.isFinite(own.alt) ? own.alt : route.points[route.activeIdx]?.alt ?? 0;
+  const seq = [{ lat: own.lat, lon: own.lon, alt, index: -1 }, ...route.alternate.map((p, i) => ({ ...p, index: i }))];
+  const chain = computeChain(seq, cfg, { wind: route.wind, dev: route.isaDev || 0 }, 0, { 0: seq[0] });
+  const enroute = -chain.fuelEnd;
+  return { need: enroute + (cfg.approachLanding || 0) + (cfg.reserve || 0), enroute, time: chain.time, name: route.alternate.at(-1).name };
 }
 
 /* ==== estimateFuel ==== EST FUEL：最後の燃料チェック（無ければ離陸時の燃料）から、現在の区間の計画燃料流量で減らす */

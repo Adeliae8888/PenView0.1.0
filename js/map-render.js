@@ -1,6 +1,7 @@
 /* ==== map-render.js ==== 地図の描画。陸地・空域は「世界座標の固定パス＋変換行列」、点記号と自機は「画面座標で毎回描画」 */
 import { destination, distanceNm, pointInRing } from './geo.js';
 import { drawGrid } from './grid.js';
+import { pointTag } from './route.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 // 縮尺（px/km）ごとの表示しきい値
@@ -158,25 +159,35 @@ function stptMarker(view, p, label, cls) {
   return `<g class="stpt ${cls}" transform="translate(${s.x.toFixed(1)} ${s.y.toFixed(1)})"><circle r="6"/><text x="9" y="-7">${esc(label)}</text></g>`;
 }
 
-/* ==== drawRoute ==== アクティブルート：通過済み（淡）、アクティブ区間（強調）、以降、代替経路（破線）、TOC、DIRECT 予告 */
-function drawRoute(view, nav) {
+/* ==== legsD ==== 点の並びの線。skip(to) が真の区間は引かない（手順の区間は作図の線を重ねるので直線は要らない） */
+function legsD(view, pts, skip) {
+  return pts.map((g, i) => {
+    const p = view.geoToScreen(g.lat, g.lon);
+    return `${i === 0 || skip(g) ? 'M' : 'L'}${p.x.toFixed(1)} ${p.y.toFixed(1)}`;   // 手順の区間はペンを上げて移動だけ
+  }).join('');
+}
+
+/* ==== drawRoute ==== アクティブルート：通過済み（淡）、アクティブ区間（強調）、以降、代替経路（破線）、TOC、DIRECT 予告
+ * procGeom＝NAV モード：手順の区間は直線を引かない（手順の作図の線を proc-wire が描き、アクティブ区間はそちらで強調） */
+function drawRoute(view, nav, procGeom) {
   const r = nav?.route;
   if (!r || !r.points.length) return '';
   const pts = r.points;
   const live = pts.map((p, i) => ({ ...p, i })).filter((p) => !p.skipped);
   const ai = live.findIndex((p) => p.i === r.activeIdx);
   const origin = r.flight?.directOrigin;
+  const skip = (p) => procGeom && !!p.proc && Number.isFinite(p.pathNm);
   let out = '';
-  if (ai > 0) out += `<path class="route-flown" d="${lineD(view, live.slice(0, ai))}"/>`;
-  if (ai >= 0) out += `<path class="route-active" d="${lineD(view, [origin || live[ai - 1] || live[ai], live[ai]])}"/>`;
-  if (ai >= 0 && ai < live.length - 1) out += `<path class="route-line" d="${lineD(view, live.slice(ai))}"/>`;
+  if (ai > 0) out += `<path class="route-flown" d="${legsD(view, live.slice(0, ai), skip)}"/>`;
+  if (ai >= 0 && (origin || !skip(live[ai]))) out += `<path class="route-active" d="${lineD(view, [origin || live[ai - 1] || live[ai], live[ai]])}"/>`;
+  if (ai >= 0 && ai < live.length - 1) out += `<path class="route-line" d="${legsD(view, live.slice(ai), skip)}"/>`;
   if (r.alternate?.length) out += `<path class="route-alt" d="${lineD(view, [pts.at(-1), ...r.alternate])}"/>`;
   (nav.plan?.toc || []).concat(nav.plan?.altToc || []).forEach((t) => {
     const s = view.geoToScreen(t.lat, t.lon);
     out += `<g class="toc" transform="translate(${s.x.toFixed(1)} ${s.y.toFixed(1)})"><path d="M-6 0H6"/><text x="0" y="-6" text-anchor="middle">TOC</text></g>`;
   });
   pts.forEach((p, i) => {
-    const label = i === 0 ? `DEP ${p.name}` : i === pts.length - 1 ? `DST ${p.name}` : `${i} ${p.name}`;
+    const label = `${pointTag(pts, i)} ${p.name}`;
     out += stptMarker(view, p, label, p.skipped ? 'skip' : i === r.activeIdx ? 'active' : '');
   });
   (r.alternate || []).forEach((p, i) => { out += stptMarker(view, p, i === r.alternate.length - 1 ? `ALT ${p.name}` : `A${i + 1} ${p.name}`, 'alt'); });
@@ -210,7 +221,7 @@ export function drawOverlay(el, view, state, variation, nav = null, extra = {}) 
     drawNavaids(view, state.data.navaids, s.layers.navaids, k),
     drawBullseye(view, s.bullseye, variation, tac),
     drawUserPoints(view, nav?.userPoints || []),
-    drawRoute(view, nav),
+    drawRoute(view, nav, !tac),
     drawDirectArm(view, state.directArm, state.own),
     drawSelection(view, state.selection),
     drawOwnship(view, state.own),

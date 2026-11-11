@@ -37,11 +37,13 @@ export function removeUserPoint(id) {
   saveUserPoints();
 }
 
-/* ==== allPoints ==== 名前で引ける全地点（優先順：ユーザー → STPT → NAVAID → 飛行場 → ウェイポイント） */
+/* ==== allPoints ==== 名前で引ける全地点（優先順：ユーザー → STPT → NAVAID → 飛行場 → ウェイポイント）
+ * 飛行場と同じ名前の STPT は除く（同じ基地へ戻るルートで、目的地が DEP の点として引かれ標高を失わないように） */
 export function allPoints() {
+  const icao = new Set(sources.airports.map((a) => a.icao).filter(Boolean));
   return [
     ...sources.userPoints.map((p) => ({ name: p.name, label: `${p.name}（ユーザー）`, lat: p.lat, lon: p.lon, kind: 'user' })),
-    ...sources.routePoints().map((p) => ({ name: p.name, label: `${p.name}（STPT）`, lat: p.lat, lon: p.lon, kind: 'stpt' })),
+    ...sources.routePoints().filter((p) => !icao.has(p.name)).map((p) => ({ name: p.name, label: `${p.name}（STPT）`, lat: p.lat, lon: p.lon, kind: 'stpt' })),
     ...sources.navaids.map((n) => ({ name: n.ident, label: `${n.ident} ${n.t}（${n.n}）`, lat: n.p[1], lon: n.p[0], kind: 'navaid', dec: n.dec })),
     ...sources.airports.filter((a) => a.icao).map((a) => ({ name: a.icao, label: `${a.icao}（${a.n}）`, lat: a.p[1], lon: a.p[0], kind: 'airport', elev: a.elev })),
     ...sources.waypoints.map((w) => ({ name: w.n, label: `${w.n}（${w.t || 'WPT'}）`, lat: w.p[1], lon: w.p[0], kind: 'waypoint' })),

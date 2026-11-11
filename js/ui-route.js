@@ -1,6 +1,9 @@
 /* ==== ui-route.js ==== ルート編集（経路・代替経路・STPT 詳細）とフライトログ表 */
 import { state, emit, currentVariation } from './state.js';
-import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes, setActiveIdx } from './route.js';
+import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes, setActiveIdx, pointTag } from './route.js';
+import { procedures } from './procedures.js';
+import { PROC_ROLES, procChoices } from './route-proc.js';
+import { syncProcRoutes } from './proc-wire.js';
 import { aircraftList } from './aircraft.js';
 import { resolvePoint, searchPoints } from './points.js';
 import { navContext, etaTable } from './nav.js';
@@ -45,6 +48,18 @@ function routeFields(r) {
       <label>kt<input type="number" data-rf="windSpd" value="${esc(val(r.wind?.spd))}" /></label>${f('isaDev', 'ISA偏差 ℃')}</div>`;
 }
 
+/* ==== procFields ==== DEP の飛行場に SID、DST の飛行場に STAR・APP があれば選べる。選ぶとフィックスが経路に入る */
+function procFields(r) {
+  const one = (role) => {
+    const choices = procChoices(r, role, procedures());
+    if (!choices.length) return '';
+    const opts = choices.map((p) => `<option value="${esc(p.id)}" ${r.procs?.[role] === p.id ? 'selected' : ''}>${esc(p.name || '(名前なし)')}${p.type === 'SID' && p.rwy ? ` RWY${esc(p.rwy)}` : ''}</option>`).join('');
+    return `<label class="grow">${role}<select data-rf="proc:${role}"><option value="">なし</option>${opts}</select></label>`;
+  };
+  const html = PROC_ROLES.map(one).join('');
+  return html ? `<div class="row wrap proc-pick">${html}</div>` : '';
+}
+
 function pointDetail(p, list, i) {
   const spd = p.speed || { unit: 'TAS', value: null };
   return `<tr class="pt-detail"><td colspan="6"><div class="row wrap">
@@ -60,7 +75,7 @@ function pointDetail(p, list, i) {
 function pointRows(r, list) {
   const arr = r[list];
   return arr.map((p, i) => {
-    const tag = list === 'alternate' ? (i === arr.length - 1 ? 'ALT' : `A${i + 1}`) : i === 0 ? 'DEP' : i === arr.length - 1 ? 'DST' : String(i);
+    const tag = list === 'alternate' ? (i === arr.length - 1 ? 'ALT' : `A${i + 1}`) : pointTag(arr, i);
     const isActive = list === 'points' && i === r.activeIdx;
     const isSel = selected && selected.list === list && selected.i === i;
     const cls = [isActive ? 'active' : '', isSel ? 'sel' : '', p.skipped ? 'skip' : ''].join(' ');
@@ -69,8 +84,8 @@ function pointRows(r, list) {
     return `<tr class="${cls}"><td>${tag}</td><td class="pick" data-pact="select" data-list="${list}" data-i="${i}"><b>${esc(p.name)}</b></td>
       <td><input type="number" class="alt" data-pf="alt" data-list="${list}" data-i="${i}" value="${esc(val(p.alt))}" /></td>
       <td class="nowrap">${act}<button type="button" class="btn sm" data-pact="detail" data-list="${list}" data-i="${i}">${open ? '閉' : '詳細'}</button>
-      <button type="button" class="btn sm" data-pact="up" data-list="${list}" data-i="${i}">↑</button><button type="button" class="btn sm" data-pact="down" data-list="${list}" data-i="${i}">↓</button>
-      <button type="button" class="btn sm danger" data-pact="del" data-list="${list}" data-i="${i}">×</button></td></tr>${open ? pointDetail(p, list, i) : ''}`;
+      ${p.proc ? '<span class="muted">手順</span>' : `<button type="button" class="btn sm" data-pact="up" data-list="${list}" data-i="${i}">↑</button><button type="button" class="btn sm" data-pact="down" data-list="${list}" data-i="${i}">↓</button>
+      <button type="button" class="btn sm danger" data-pact="del" data-list="${list}" data-i="${i}">×</button>`}</td></tr>${open ? pointDetail(p, list, i) : ''}`;
   }).join('');
 }
 
@@ -91,7 +106,7 @@ export function renderRouteTab(el) {
       <button type="button" class="btn" data-ract="new">新規</button>${r ? '<button type="button" class="btn" data-ract="dup">複製</button><button type="button" class="btn danger" data-ract="del">削除</button>' : ''}</div>
     ${r ? `<div class="row"><button type="button" class="btn ${r.id === activeRoute()?.id ? 'active' : ''}" data-ract="activate">${r.id === activeRoute()?.id ? '★ アクティブ' : 'アクティブにする'}</button>
       <button type="button" class="btn" data-ract="reset">飛行実績をリセット</button></div>
-    ${routeFields(r)}<h3>経路（DEP → STPT → DST）</h3><p class="muted legend">▶ 紫＝航法中のアクティブ STPT（▶ で変更）／ 枠＝編集で選択中の行（名前をタップ。追加は選択行の前後に入る）</p><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
+    ${routeFields(r)}${procFields(r)}<h3>経路（DEP → STPT → DST）</h3><p class="muted legend">▶ 紫＝航法中のアクティブ STPT（▶ で変更）／ 枠＝編集で選択中の行（名前をタップ。追加は選択行の前後に入る）</p><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
     <h3>代替経路（DST → ALT）任意</h3><table class="pts">${pointRows(r, 'alternate')}</table>${addRow('alternate')}` : '<p class="muted">「新規」でルートを作成してください</p>'}
     <datalist id="ptSuggest"></datalist>`;
 }
@@ -103,6 +118,11 @@ function setRouteField(r, key, value) {
     return;
   }
   if (key === 'homeBingoPointId') { r.homeBingoPointId = value || null; return; }
+  if (key.startsWith('proc:')) {
+    r.procs = { ...r.procs, [key.slice(5)]: value || null };
+    syncProcRoutes({ route: r, force: true });
+    return;
+  }
   if (key === 'configRef') { const [aircraftId, configId] = value.split('|'); r.configRef = value ? { aircraftId, configId } : null; return; }
   if (key === 'windDir' || key === 'windSpd') { r.wind = { dir: 0, spd: 0, ...r.wind, [key === 'windDir' ? 'dir' : 'spd']: num(value) || 0 }; return; }
   r[key] = ['name', 'plannedTakeoff'].includes(key) ? value : num(value);
@@ -199,7 +219,8 @@ export function renderLogTab(el) {
     const cruise = l.segs.find((s) => s.phase === 'cruise') || l.segs[0];
     const phases = l.segs.map((s) => ({ climb: 'C', cruise: 'R', descent: 'D' }[s.phase])).join('');
     const cls = alt ? 'alt' : l.toIndex < r.activeIdx ? 'flown' : l.toIndex === r.activeIdx ? 'active' : '';
-    return `<tr class="${cls}"><td>${esc(l.name)}${l.direct ? ' <small>DIR</small>' : ''}</td><td>${formatBearing(toMagnetic(l.course, v))}</td><td>${l.dist.toFixed(1)}</td>
+    const mark = alt ? '' : r.points[l.toIndex]?.mark;
+    return `<tr class="${cls}"><td>${esc(l.name)}${mark ? ` <small>${esc(mark)}</small>` : ''}${l.direct ? ' <small>DIR</small>' : ''}</td><td>${formatBearing(toMagnetic(l.course, v))}</td><td>${l.dist.toFixed(1)}</td>
       <td>${Math.round(l.cruiseAlt ?? l.alt)}</td><td>${Math.round(cruise.tas)} <small>${phases}</small></td><td>${Math.round(l.gs)}</td><td>${formatDuration(l.time)}</td>
       <td>${alt ? '' : formatClock(etas[l.toIndex], false)}</td><td>${lb(l.fuel)}</td><td>${lb(l.fuelRem)}</td>
       <td>${act ? lb(act.fuel) : ''}</td><td class="${act && act.fuel < l.fuelRem ? 'neg' : ''}">${act ? `${act.fuel >= l.fuelRem ? '+' : ''}${lb(act.fuel - l.fuelRem)}` : ''}</td></tr>`;
