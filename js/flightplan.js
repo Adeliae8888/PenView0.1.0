@@ -92,7 +92,9 @@ function computeChain(points, cfg, opts, startFuel, origins = {}) {
   const legs = [];
   for (let i = 1; i < points.length; i += 1) {
     const to = points[i];
-    const from = origins[to.index] ? { ...origins[to.index], alt: points[i - 1].alt } : points[i - 1];
+    // DIRECT の直行線は、実行したときの自機の高度から（GPS 高度が無ければ前の点の高度）
+    const o = origins[to.index];
+    const from = o ? { ...o, alt: Number.isFinite(o.alt) ? o.alt : points[i - 1].alt } : points[i - 1];
     const leg = computeLeg(from, to, cfg, { ...opts, direct: !!origins[to.index] });
     fuel -= leg.fuel;
     time += leg.time;
@@ -137,17 +139,6 @@ export function computePlan(route, cfg) {
     result.altTime = alt.time;
   }
   return result;
-}
-
-/* ==== divertNeed ==== 復行後：現在位置から代替経路（A1 … ALT）で代替飛行場へ向かい、接地後に予備燃料（機種の最低燃料）を残すために
- * 今、持っているべき燃料 = 途中の燃料 + 進入・着陸 + 予備。代替経路が無ければ null */
-export function divertNeed(route, cfg, own) {
-  if (!route.alternate?.length || missingPerf(cfg).length || !Number.isFinite(own?.lat)) return null;
-  const alt = Number.isFinite(own.alt) ? own.alt : route.points[route.activeIdx]?.alt ?? 0;
-  const seq = [{ lat: own.lat, lon: own.lon, alt, index: -1 }, ...route.alternate.map((p, i) => ({ ...p, index: i }))];
-  const chain = computeChain(seq, cfg, { wind: route.wind, dev: route.isaDev || 0 }, 0, { 0: seq[0] });
-  const enroute = -chain.fuelEnd;
-  return { need: enroute + (cfg.approachLanding || 0) + (cfg.reserve || 0), enroute, time: chain.time, name: route.alternate.at(-1).name };
 }
 
 /* ==== estimateFuel ==== EST FUEL：最後の燃料チェック（無ければ離陸時の燃料）から、現在の区間の計画燃料流量で減らす */

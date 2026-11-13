@@ -3,7 +3,7 @@ import { state, emit, currentVariation } from './state.js';
 import { activeRoute, autoSequence, recordTakeoff } from './route.js';
 import { findConfig } from './aircraft.js';
 import { userPoints } from './points.js';
-import { computePlan, estimateFuel, projectLanding, remainingFromPosition, divertNeed } from './flightplan.js';
+import { computePlan, estimateFuel, projectLanding, remainingFromPosition } from './flightplan.js';
 import { distanceNm, bearingTrue, toMagnetic, crossTrackNm, gsiVariation } from './geo.js';
 import { toTas, windTriangle } from './aero.js';
 import { now, parseClock } from './clock.js';
@@ -104,11 +104,8 @@ export function fuelGates(nav, own, est) {
     const f = pt ? fuelToPoint(nav, own, pt) : { fuel: 0 };
     out.bingo = f.passed ? { passed: true, min: route.bingo, name: pt.name } : { proj: est - f.fuel, min: route.bingo, name: pt?.name || 'NOW' };
   }
-  if (route.flight?.diverted) {
-    // DIVERT 後：行き先は代替飛行場。接地時に予備燃料（機種の最低燃料）を残せるか
-    out.home = { proj: projectLanding(plan, route, own, est, cfg)?.dest, min: cfg.reserve || 0, name: route.points.at(-1)?.name || 'ALT', label: 'MIN' };
-  } else if (route.flight?.missed) {
-    // 復行中：目的地の接地は無くなったので HOME BINGO は判定しない（代わりに DIVERT の必要燃料を出す）
+  if (route.flight?.missed || route.flight?.diverted) {
+    // 復行・DIVERT 後は目的地に降りないので HOME BINGO は判定しない。DIVERT 後は DIV（必要燃料）を出す。下回っても赤字のみで点滅しない（決定）
   } else if (Number.isFinite(route.homeBingo)) {
     const home = route.points.find((p) => p.id === route.homeBingoPointId);
     if (home && home !== route.points.at(-1)) {
@@ -146,7 +143,8 @@ export function liveNav(nav, own, t = now()) {
     out.est = estimateFuel(plan, route, t);
     out.proj = projectLanding(plan, route, own, out.est, cfg);
     out.gates = fuelGates(nav, own, out.est);
-    if (route.flight?.missed && !route.flight.diverted) out.divert = divertNeed(route, cfg, own);
+    // DIV：代替飛行場で接地後に予備燃料（機種の最低燃料）を残すために今、持っているべき燃料＝残りの燃料＋進入着陸＋予備
+    if (route.flight?.diverted && Number.isFinite(out.proj?.dest)) out.divert = { need: out.est - out.proj.dest + (cfg.reserve || 0), name: route.points.at(-1)?.name || 'ALT' };
   }
   return out;
 }

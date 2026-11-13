@@ -151,7 +151,7 @@ export function executeDirect(route, target, own) {
   route.points.forEach((p, i) => { if (i < idx && i >= route.activeIdx) p.skipped = true; });
   route.points[idx].skipped = false;
   route.activeIdx = idx;
-  route.flight.directOrigin = { lat: own.lat, lon: own.lon, name: 'DIR' };
+  route.flight.directOrigin = { lat: own.lat, lon: own.lon, alt: Number.isFinite(own.alt) ? own.alt : null, name: 'DIR' };
   saveRoutes();
   return idx;
 }
@@ -185,16 +185,17 @@ export function executeMissed(route, missedPts) {
   return true;
 }
 
-/* ==== executeDivert ==== DIVERT：現在位置から代替経路（A1 … ALT）へ。代替経路の点を主経路の後ろに移し、代替飛行場が新しい行き先になる */
+/* ==== executeDivert ==== DIVERT（復行後、または目的飛行場から 30NM 以内）：現在位置から代替経路（A1 … ALT）へ直行。代替経路の点を主経路の後ろに移し、代替飛行場が新しい行き先になる */
 export function executeDivert(route, own) {
   if (!route.alternate?.length || route.flight.diverted || !Number.isFinite(own?.lat)) return false;
   if (!route.flight.planned) route.flight.planned = structuredClone({ points: route.points, alternate: route.alternate, activeIdx: route.activeIdx });
   const start = route.points.length;
+  if (!route.points.some((p) => p.role === 'dst')) route.points[start - 1].role = 'dst';   // 進入前の DIVERT：元の目的地は DST のまま
   route.points.forEach((p, i) => { if (i >= route.activeIdx) p.skipped = true; });
   route.alternate.forEach((p, i, arr) => route.points.push({ ...structuredClone(p), id: uid('pt'), mark: i === arr.length - 1 ? 'ALT' : 'A', skipped: false }));
   route.alternate = [];
   route.activeIdx = start;
-  route.flight.directOrigin = { lat: own.lat, lon: own.lon, name: 'DIV' };
+  route.flight.directOrigin = { lat: own.lat, lon: own.lon, alt: Number.isFinite(own.alt) ? own.alt : null, name: 'DIV' };
   route.flight.diverted = { at: Date.now() };
   saveRoutes();
   return true;

@@ -3,7 +3,7 @@ import { load, save } from './store.js';
 
 export const PROC_KEY = 'procedures';
 export const PROC_TYPES = ['SID', 'STAR', 'APP'];
-export const PART_TYPES = { tf: '直線（→フィックス）', radial: 'ラジアル', heading: '針路で上昇', arc: 'DME アーク' };
+export const PART_TYPES = { tf: '直線（→フィックス）', radial: 'ラジアル', heading: '針路で上昇', turnhdg: '旋回して針路', arc: 'DME アーク' };
 let list = [];
 const uid = (p) => `${p}-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
 
@@ -50,6 +50,7 @@ export function newPart(type) {
   if (type === 'tf') return { ...base, to: '' };
   if (type === 'radial') return { ...base, station: '', radial: null, inbound: false, end: { type: 'dme', dist: null } };
   if (type === 'heading') return { ...base, hdg: null, end: { type: 'alt', alt: null, grad: 3.3 } };
+  if (type === 'turnhdg') return { ...base, dir: 'L', hdg: null, end: { type: 'fix', to: '' } };
   return { ...base, station: '', dme: null, to: null, dir: 'R' };
 }
 

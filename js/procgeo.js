@@ -13,6 +13,7 @@ const ARC_STEP_DEG = 3;
 const MIN_TURN_DEG = 2;
 const SCAN_MAX_NM = 250;
 const M_PER_NM = 1852;
+export const DEFAULT_TURN_KIAS = 250;      // 「旋回して針路」で速度を入れないときの旋回速度
 
 /* ==== turnRadiusNm ==== 半径を直接、または KIAS・高度・バンク角から */
 export function turnRadiusNm(turn) {
@@ -154,7 +155,32 @@ function partGeometry(part, cur, ctx) {
     return { pts: [from, e.p], end: e.p, endName: e.name || '', endAlt: e.alt, c0: course, c1: course };
   }
   if (part.type === 'arc') return arcGeometry(part, from, ctx);
+  if (part.type === 'turnhdg') return turnHeadingGeometry(part, cur, ctx);
   return { error: '不明なパーツ' };
+}
+
+/* ==== turnHeadingGeometry ==== 旋回して針路（turn left HDG 002° など）：今の進路から指定の向きに旋回し、針路に乗ってから終わりの条件まで直進
+ * 180° を超える旋回・ティアドロップも描ける。半径は part.turn（速度・バンク、または半径）。無ければ 250KIAS・25°。高度で終わるときは旋回中の上昇も数える */
+function turnHeadingGeometry(part, cur, ctx) {
+  const from = cur.p;
+  if (!Number.isFinite(cur.c)) return { error: '旋回の前の進路が決まりません（最初のパーツには使えません）' };
+  if (!Number.isFinite(Number(part.hdg)) || part.hdg === null || part.hdg === '') return { error: '針路を入れてください' };
+  const hdg = toTrue(Number(part.hdg), gsiVariation(from.lat, from.lon) ?? 0);
+  const right = (part.dir || 'R') === 'R';
+  const t = part.turn?.mode ? { ...part.turn, alt: part.turn.alt || cur.alt } : { mode: 'perf', kias: DEFAULT_TURN_KIAS, alt: cur.alt };
+  const r = turnRadiusNm(t);
+  if (!(r > 0)) return { error: '旋回半径が決まりません' };
+  const sweep = right ? norm360(hdg - cur.c) : norm360(cur.c - hdg);
+  const c = destination(from, cur.c + (right ? 90 : -90), r);
+  const b0 = bearingTrue(c, from);
+  const n = Math.max(1, Math.ceil(sweep / ARC_STEP_DEG));
+  const arc = Array.from({ length: n + 1 }, (_, i) => destination(c, b0 + (right ? 1 : -1) * (sweep * i) / n, r));
+  const p1 = arc.at(-1);
+  const arcNm = r * sweep * RAD;
+  const climbed = part.end?.type === 'alt' ? arcNm * gradientFtPerNm(part.end.grad) : 0;
+  const e = legEnd(p1, hdg, part.end, ctx, { ...cur, alt: cur.alt + climbed }, null);
+  if (!e?.p) return { error: '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
+  return { pts: [...arc, e.p], end: e.p, endName: e.name || '', endAlt: e.alt, c0: cur.c, c1: hdg, p1, radius: r };
 }
 
 /* ==== arcGeometry ==== DME アーク：局を中心に、今のラジアルから指定ラジアルまで（R＝時計回り） */
@@ -202,6 +228,7 @@ function courseLabel(part, g) {
   if (part.type === 'arc') return `${Math.round(g.radius)}DME ARC ${part.station}`;
   if (part.type === 'radial') return `${part.station} R-${String(Math.round(Number(part.radial)) % 360).padStart(3, '0')} ${dist.toFixed(1)}`;
   if (part.type === 'heading') return `HDG ${String(Math.round(Number(part.hdg)) % 360 || 360).padStart(3, '0')}° ${dist.toFixed(1)}`;
+  if (part.type === 'turnhdg') return `${part.dir === 'L' ? 'L' : 'R'} TURN HDG ${String(Math.round(Number(part.hdg)) % 360 || 360).padStart(3, '0')}° ${distanceNm(g.p1, b).toFixed(1)}`;
   return `${crs}° ${dist.toFixed(1)}`;
 }
 
@@ -212,7 +239,8 @@ function buildLegs(parts, start, ctx, out, dashed) {
   parts.forEach((part, i) => {
     const g = partGeometry(part, cur, ctx);
     if (g.error) { out.warnings.push(`${dashed ? '復行 ' : ''}${i + 1}：${g.error}`); return; }
-    const turn = part.turn && prevGeom ? filletTurn(prevGeom, g, turnRadiusNm(part.turn)) : null;
+    // 「旋回して針路」の turn は自分の旋回の半径（角の丸めではない）
+    const turn = part.turn && part.type !== 'turnhdg' && prevGeom ? filletTurn(prevGeom, g, turnRadiusNm(part.turn)) : null;
     if (turn?.error) out.warnings.push(`${i + 1}：${turn.error}`);
     if (turn?.arc) out.segments.push({ pts: turn.arc, dashed, turn: true });
     const seg = { pts: g.pts, dashed, partId: part.id };

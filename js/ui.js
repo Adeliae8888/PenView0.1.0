@@ -177,7 +177,7 @@ export function bindUi(actions) {
   document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => $(b.dataset.close).classList.remove('open')));
   $('zoomIn').addEventListener('click', () => actions.zoom(1.6));
   $('zoomOut').addEventListener('click', () => actions.zoom(1 / 1.6));
-  $('followBtn').addEventListener('click', () => updateSettings({ follow: !state.settings.follow }));
+  $('followBtn').addEventListener('click', () => updateSettings({ follow: true, orient: 'track' }));   // ◎＝いつでも自機中央＋Track-up
   $('gridBtn').addEventListener('click', () => updateSettings({ layers: { ...state.settings.layers, grid: !state.settings.layers.grid } }));
   bindInfoSheet(actions);
   bindSettingsSheet(actions);

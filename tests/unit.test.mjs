@@ -231,7 +231,7 @@ test('ルート編集・自動送り・DIRECT', () => {
   executeDirect(r, { pointId: r.points[4].id }, { lat: 36.1, lon: 140.5 });
   assert.equal(r.activeIdx, 4);
   assert.ok(r.points[3].skipped && !r.points[4].skipped);
-  assert.deepEqual(r.flight.directOrigin, { lat: 36.1, lon: 140.5, name: 'DIR' });
+  assert.deepEqual(r.flight.directOrigin, { lat: 36.1, lon: 140.5, alt: null, name: 'DIR' });
   assert.ok(!stepActive(r, 1), '目的地より先へは進めない');
   stepActive(r, -1);
   assert.equal(r.activeIdx, 2, '飛ばした点は▲▼で避ける');
@@ -379,7 +379,6 @@ test('エディター：SID を組み立てる（針路で上昇→旋回→ラ�
 /* ==== 0.2.3 手順のルート連携 ==== */
 import { syncRouteProcs, missedPoints, fixAlt, procChoices, approachPhase } from '../js/route-proc.js';
 import { executeMissed, executeDivert, resetFlight, pointTag } from '../js/route.js';
-import { divertNeed } from '../js/flightplan.js';
 
 const SID_ARC = {
   id: 'sid1', type: 'SID', ad: 'RJAH', rwy: '03', parts: [
@@ -473,16 +472,12 @@ test('MISSED APP → 復行の点、DIVERT は手動、リセットで計画に�
   assert.ok(r.points.at(-2).skipped, '目的地には降りていない');
   assert.equal(r.alternate.length, 1, '代替経路へは自動で向けない');
   assert.equal(syncRouteProcs(r, getProc, build), false, '復行後は同期しない');
-  // DIVERT の必要燃料：現在位置から代替飛行場までの燃料＋進入着陸＋予備（独立に区間計算した値と一致）
   const own = { lat: ma[0].lat, lon: ma[0].lon, alt: 4000 };
-  const need = divertNeed(r, CFG, own);
-  const leg = computeLeg(own, r.alternate[0], CFG, { wind: null, dev: 0, direct: true });
-  near(need.need, leg.fuel + 600 + 1500, 1e-6, 'DIV = 区間燃料 + 進入着陸 600 + 予備 1500');
   assert.ok(executeDivert(r, own));
   assert.equal(r.points[r.activeIdx].name, 'ALTN');
   assert.equal(pointTag(r.points, r.activeIdx), 'ALT');
   assert.equal(r.alternate.length, 0);
-  assert.deepEqual(r.flight.directOrigin, { lat: own.lat, lon: own.lon, name: 'DIV' });
+  assert.deepEqual(r.flight.directOrigin, { lat: own.lat, lon: own.lon, alt: 4000, name: 'DIV' });
   resetFlight(r);
   assert.deepEqual(r.points.map((p) => p.id), before.map((p) => p.id), 'リセットで元の並び');
   assert.equal(r.alternate.length, 1);
@@ -495,4 +490,41 @@ test('同じ基地へ戻るルート：目的地の飛行場名は DEP の点で
   const p = resolvePoint('RJAH');
   assert.equal(p.elev, 105);
   setPointSources({ airports: [], navaids: [], routePoints: () => [] });
+});
+
+test('進入前の DIVERT：その位置から代替へ直行し、元の目的地は DST のまま', () => {
+  const r = procRoute();
+  syncRouteProcs(r, getProc, build);
+  r.activeIdx = r.points.findIndex((p) => p.mark === 'APP');
+  const own = { lat: 36.3, lon: 140.5 };
+  assert.ok(executeDivert(r, own));
+  assert.equal(pointTag(r.points, r.activeIdx), 'ALT');
+  assert.equal(pointTag(r.points, r.points.length - 2), 'DST');
+  assert.ok(r.points.filter((p) => p.mark === 'APP').every((p) => p.skipped));
+});
+
+test('旋回して針路：左旋回 HDG 002°（ティアドロップ）。弧は半径×角度、旋回後の直線は指定の針路でラジアルに会合', () => {
+  const proc = { id: 't', type: 'SID', ad: 'RJAH', rwy: '21', parts: [
+    { id: 'a', type: 'heading', hdg: 210, end: { type: 'alt', alt: 600, grad: 3.3 } },
+    { id: 'b', type: 'turnhdg', dir: 'L', hdg: 2, turn: { mode: 'radius', radius: 2 }, end: { type: 'fix', to: 'HUC R-047' } }] };
+  const ctx = { ...PCTX, findAirport: () => ({ icao: 'RJAH', elev: 105, p: [140.415, 36.1811], rwy: [{ d: '21', hdg: 210, len: 2700 }] }) };
+  const r = buildProcedure(proc, ctx);
+  assert.deepEqual(r.warnings.filter((w) => !w.includes('推定値')), []);
+  const seg = r.segments.find((x) => x.partId === 'b');
+  const fixA = r.fixes[0];
+  const fixB = r.fixes[1];
+  // 弧の終点（直線の始まり）は、弧の中心から半径 2nm
+  const p1 = seg.pts.at(-2);
+  const center = destination(fixA, bearingTrue(r.start, fixA) - 90, 2);   // 左旋回：中心は入ってくる進路の左 90°
+  near(distanceNm(center, p1), 2, 0.01, '半径');
+  // 弧の長さ = 2nm × 中心角（左回りに 210→354 真方位＝真方位差 216°）
+  const inTrue = bearingTrue(r.start, fixA);
+  const outTrue = bearingTrue(p1, fixB);
+  const sweep = (inTrue - outTrue + 360) % 360;
+  let arcLen = 0;
+  for (let i = 1; i < seg.pts.length - 1; i += 1) arcLen += distanceNm(seg.pts[i - 1], seg.pts[i]);
+  near(arcLen, 2 * sweep * Math.PI / 180, 0.02, '弧の長さ');
+  // 会合点は HUC R047 上
+  near(bearingTrue(ST.HUC, fixB), (47 + ST.HUC.dec + 360) % 360, 0.1, 'R047 上（交点の数値誤差 5m 程度）');
+  near(fixB.pathNm, arcLen + distanceNm(p1, fixB), 0.01, '実距離＝弧＋直線');
 });

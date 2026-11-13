@@ -5,7 +5,7 @@ import { procedures, findProcedure, newProcedure, removeProcedure, duplicateProc
 import { searchPoints } from './points.js';
 import { built } from './proc-render.js';
 import { esc } from './map-render.js';
-import { DEFAULT_GRADIENT_PCT, DEFAULT_BANK_DEG, turnRadiusNm } from './procgeo.js';
+import { DEFAULT_GRADIENT_PCT, DEFAULT_BANK_DEG, DEFAULT_TURN_KIAS, turnRadiusNm } from './procgeo.js';
 
 const ALT_TYPES = { '': '高度制限なし', at: '指定（上下線）', above: '以上（下線）', below: '以下（上線）', between: '範囲' };
 const val = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : v);
@@ -33,22 +33,24 @@ function partFields(pt, base) {
     return fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.dme`, 'DME', pt.dme)
       + fld(`${base}.to`, '→ ラジアル', pt.to) + sel(`${base}.dir`, '向き', pt.dir, { R: '右回り', L: '左回り' });
   }
-  const head = pt.type === 'radial'
-    ? fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.radial`, 'R-', pt.radial) + sel(`${base}.inbound`, '', pt.inbound ? '1' : '', { '': '外向き', 1: '局へ向かう' })
-    : fld(`${base}.hdg`, '針路 °M', pt.hdg);
+  let head = fld(`${base}.hdg`, '針路 °M', pt.hdg);
+  if (pt.type === 'radial') head = fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.radial`, 'R-', pt.radial) + sel(`${base}.inbound`, '', pt.inbound ? '1' : '', { '': '外向き', 1: '局へ向かう' });
+  if (pt.type === 'turnhdg') head = sel(`${base}.dir`, '旋回', pt.dir, { L: '左旋回', R: '右旋回' }) + head;
   const e = pt.end || {};
   const endSel = sel(`${base}.end.type`, '終わり', e.type, { dme: 'DME', fix: 'フィックス/ラジアル', alt: '高度' });
   let endFld = '';
-  if (e.type === 'dme') endFld = (pt.type === 'heading' ? fld(`${base}.end.station`, '局', e.station, { type: 'text', fix: true }) : '') + fld(`${base}.end.dist`, 'D', e.dist);
+  if (e.type === 'dme') endFld = (pt.type !== 'radial' ? fld(`${base}.end.station`, '局', e.station, { type: 'text', fix: true }) : '') + fld(`${base}.end.dist`, 'D', e.dist);
   if (e.type === 'fix') endFld = fld(`${base}.end.to`, 'フィックス', e.to, { type: 'text', fix: true, grow: true, ph: 'HUC R-300 / MENOU' });
   if (e.type === 'alt') endFld = fld(`${base}.end.alt`, '高度 ft', e.alt) + fld(`${base}.end.grad`, '上昇勾配 %', e.grad, { ph: String(DEFAULT_GRADIENT_PCT) });
   return head + endSel + endFld;
 }
 
-/* ==== turnFields ==== 前のパーツとの角を旋回でつなぐ：半径を直接、または KIAS・高度・バンク */
+/* ==== turnFields ==== 前のパーツとの角を旋回でつなぐ：半径を直接、または KIAS・高度・バンク
+ * 「旋回して針路」では自分の旋回の半径（既定は 250KIAS・25°・その時の高度） */
 function turnFields(pt, base) {
   const t = pt.turn || {};
-  const mode = sel(`${base}.turn.mode`, '旋回', t.mode || '', { '': 'なし', radius: '半径', perf: 'KIAS・バンク' });
+  const own = pt.type === 'turnhdg';
+  const mode = sel(`${base}.turn.mode`, own ? '旋回半径' : '旋回', t.mode || '', { '': own ? `既定（${DEFAULT_TURN_KIAS}KIAS・${DEFAULT_BANK_DEG}°）` : 'なし', radius: '半径', perf: 'KIAS・バンク' });
   if (t.mode === 'radius') return mode + fld(`${base}.turn.radius`, '半径 nm', t.radius);
   if (t.mode === 'perf') {
     const r = turnRadiusNm(t);
@@ -67,7 +69,7 @@ function partCard(pt, i, list, n) {
       <button type="button" class="btn sm" data-pa="lbl" data-list="${list}" data-i="${i}" title="注記の位置を戻す">注記↺</button>
       <button type="button" class="btn sm danger" data-pa="del" data-list="${list}" data-i="${i}">×</button></div>
     <div class="row wrap">${partFields(pt, base)}</div>
-    <div class="row wrap">${i > 0 && pt.type !== 'arc' ? turnFields(pt, base) : ''}${fld(`${base}.name`, '終点の名前', pt.name, { type: 'text', ph: '自動' })}</div>
+    <div class="row wrap">${(i > 0 || pt.type === 'turnhdg') && pt.type !== 'arc' ? turnFields(pt, base) : ''}${fld(`${base}.name`, '終点の名前', pt.name, { type: 'text', ph: '自動' })}</div>
     <div class="row wrap">${sel(`${base}.alt.type`, '高度制限', a.type || '', ALT_TYPES)}${a.type ? fld(`${base}.alt.v`, a.type === 'between' ? '上限' : 'ft', a.v) : ''}${a.type === 'between' ? fld(`${base}.alt.v2`, '下限', a.v2) : ''}${fld(`${base}.speed`, '速度制限 KT', pt.speed)}</div></div>`;
 }
 

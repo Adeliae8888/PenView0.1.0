@@ -4,7 +4,8 @@ import { formatBearing } from './geo.js';
 import { esc } from './map-render.js';
 import { navContext, liveNav, XTK_WARN_NM, XTK_ALERT_NM } from './nav.js';
 import { stepActive, executeDirect, recordFuelCheck, executeMissed, executeDivert, pointTag } from './route.js';
-import { approachPhase } from './route-proc.js';
+import { approachPhase, destPoint } from './route-proc.js';
+import { distanceNm } from './geo.js';
 import { routeMissedPoints } from './proc-wire.js';
 import { now, formatClock, formatDuration } from './clock.js';
 import { openKeypad } from './keypad.js';
@@ -39,25 +40,32 @@ function gatesHtml(gates) {
   return html ? `<div class="dp-gates">${html}</div>` : '';
 }
 
-/* ==== fuelHtml ==== EST と見込み。復行中（DIVERT 前）は LAND/ALT の代わりに、今から代替飛行場へ向かうのに必要な燃料（DIV）を出す */
+const DIVERT_RANGE_NM = 30;          // 目的飛行場からこの範囲で DIVERT を出す
+
+/* ==== fuelHtml ==== EST と見込み。DIVERT 後は、代替飛行場で予備燃料を残すために今、持っているべき燃料（DIV）。復行中（DIVERT 前）は目的地の LAND は出さない */
 function fuelHtml(nav, live) {
   const { plan, route: r } = nav;
   if (!plan?.ok) return `<div class="dp-sub warn">燃料計算不可：${esc((plan?.missing || []).slice(0, 2).join(', ') || '2点以上必要')}</div>`;
   const est = `<span><b>EST</b>${lb(live.est)}</span>`;
-  if (r.flight?.missed && !r.flight.diverted) {
+  const f = r.flight || {};
+  if (f.diverted) {
     const d = live.divert;
-    const div = d ? `<span class="divert ${live.est < d.need ? 'bad' : ''}"><b>DIV</b>${lb(d.need)}<small> @${esc(d.name)}</small></span>` : '<span class="muted"><b>DIV</b>代替経路なし</span>';
-    return `<div class="dp-fuel">${est}${div}</div>`;
+    return `<div class="dp-fuel">${est}${d ? `<span class="divert ${live.est < d.need ? 'bad' : ''}"><b>DIV</b>${lb(d.need)}<small> @${esc(d.name)}</small></span>` : ''}</div>`;
   }
-  return `<div class="dp-fuel">${est}<span><b>${r.flight?.diverted ? 'ALT' : 'LAND'}</b>${lb(live.proj?.dest ?? plan.destLanding)}</span>${plan.altLegs.length ? `<span><b>ALT</b>${lb(live.proj?.alt ?? plan.altLanding)}</span>` : ''}</div>`;
+  const land = f.missed ? '' : `<span><b>LAND</b>${lb(live.proj?.dest ?? plan.destLanding)}</span>`;
+  return `<div class="dp-fuel">${est}${land}${plan.altLegs.length ? `<span><b>ALT</b>${lb(live.proj?.alt ?? plan.altLanding)}</span>` : ''}</div>`;
 }
 
-/* ==== phaseButtons ==== 進入中は MISSED APP（APP に復行があるとき）、復行中は DIVERT（代替経路があるとき） */
-function phaseButtons(r) {
+/* ==== phaseButtons ==== ▲▼ LOG FUEL の段の右端に小さく：進入中は MISSED APP（APP に復行があるとき）、
+ * 目的飛行場から 30NM 以内か復行後は DIVERT（代替経路があるとき） */
+function phaseButtons(r, own) {
   const f = r.flight || {};
-  if (!f.missed && r.procs?.APP && approachPhase(r) && routeMissedPoints(r).length) return '<button type="button" class="btn warn-btn" data-nav="missed">MISSED APP</button>';
-  if (f.missed && !f.diverted && r.alternate?.length) return '<button type="button" class="btn warn-btn" data-nav="divert">DIVERT</button>';
-  return '';
+  let html = '';
+  if (!f.missed && !f.diverted && r.procs?.APP && approachPhase(r) && routeMissedPoints(r).length) html += '<button type="button" class="btn sm phase-btn" data-nav="missed">MISSED APP</button>';
+  const dst = destPoint(r);
+  const near = Number.isFinite(own?.lat) && dst && distanceNm(own, dst) <= DIVERT_RANGE_NM;
+  if (!f.diverted && r.alternate?.length && (f.missed || near)) html += '<button type="button" class="btn sm phase-btn" data-nav="divert">DIVERT</button>';
+  return html;
 }
 
 /* ==== navBlockHtml ==== データパネル上段（ルートがアクティブなとき） */
@@ -68,11 +76,11 @@ export function navBlockHtml() {
   const r = nav.route;
   const label = pointTag(r.points, live.idx);
   const fuel = fuelHtml(nav, live);
-  const phase = phaseButtons(r);
+  const phase = phaseButtons(r, state.own);
   return `<div class="dp-stpt"><span class="dp-idx">${esc(label)}</span><span class="dp-name">${esc(live.target?.name || '')}</span>${r.flight.directOrigin ? '<span class="dp-dir">DIR</span>' : ''}${r.flight.missed && !r.flight.diverted ? '<span class="dp-dir">MISSED</span>' : ''}</div>
     <div class="dp-row"><span><b>BRG</b>${formatBearing(live.brg)}°</span><span><b>DIST</b>${Number.isFinite(live.dist) ? live.dist.toFixed(1) : '---'}</span><span><b>ETE</b>${formatDuration(live.ete)}</span></div>
     ${xtkHtml(live)}<div class="dp-sub"><b>ETA</b> ${formatClock(live.eta)} ${fmtTos(live.tosDelta)}</div>${fuel}${gatesHtml(live.gates)}
-    <div class="dp-actions"><button type="button" class="btn" data-nav="prev" aria-label="前の STPT">▲</button><button type="button" class="btn" data-nav="next" aria-label="次の STPT">▼</button><button type="button" class="btn" data-nav="log">LOG</button><button type="button" class="btn" data-nav="fuel">FUEL</button></div>${phase ? `<div class="dp-actions">${phase}</div>` : ''}`;
+    <div class="dp-actions"><button type="button" class="btn" data-nav="prev" aria-label="前の STPT">▲</button><button type="button" class="btn" data-nav="next" aria-label="次の STPT">▼</button><button type="button" class="btn" data-nav="log">LOG</button><button type="button" class="btn" data-nav="fuel">FUEL</button>${phase}</div>`;
 }
 
 /* ==== askFuel ==== テンキーで実燃料を入れて記録（STPT 番号つき） */

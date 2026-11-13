@@ -66,17 +66,19 @@ function requestDraw() {
   });
 }
 
-/* ==== applyOrientation ==== ◎ON：自機を中央に固定し航跡（Track）を上に／OFF：North-up（画面中心で真北が上） */
+/* ==== applyOrientation ==== ◎ ON は自機を中央に固定。向き：track＝航跡（Track）を上（針路不明・静止中は North-up）／north＝真北を上／free＝回さない */
 function applyOrientation() {
   if (gestureActive) return;
   const own = state.own;
   const following = state.settings.follow && Number.isFinite(own.lat);
-  const ref = following ? own : view.center();
-  // 針路が分からない間（静止・手動位置）は North-up
-  const upBearing = following && Number.isFinite(own.trk) ? own.trk : 0;
-  // 画面上の向きを測って、その分だけ回す（図法の子午線収束も自動で吸収）
-  const angle = view.screenAngle(ref.lat, ref.lon, upBearing);
-  if (Math.abs(angle) > 0.05) view.setRotation(view.rot - angle);
+  const orient = state.settings.orient || (state.settings.follow ? 'track' : 'north');
+  if (orient !== 'free') {
+    const ref = following ? own : view.center();
+    const upBearing = orient === 'track' && following && Number.isFinite(own.trk) ? own.trk : 0;
+    // 画面上の向きを測って、その分だけ回す（図法の子午線収束も自動で吸収）
+    const angle = view.screenAngle(ref.lat, ref.lon, upBearing);
+    if (Math.abs(angle) > 0.05) view.setRotation(view.rot - angle);
+  }
   if (following) view.centerOn(own.lat, own.lon);
 }
 
@@ -175,10 +177,13 @@ function wireEvents() {
   attachGestures($('map'), view, {
     onTap: handleTap,
     onLongPress: handleTap,
+    // スワイプ：◎ の中央固定を外し、Track-up ならその時の向きのまま止める（◎ を押すまで戻らない）
     onUserMove: () => {
       gestureActive = true;
-      if (state.settings.follow) { state.settings.follow = false; renderTopBar(); }
+      if (state.settings.follow) updateSettings({ follow: false, orient: state.settings.orient === 'north' ? 'north' : 'free' });
     },
+    // 2本指の回転：向きは手動に（◎ の中央固定は保つ）
+    onUserRotate: () => { gestureActive = true; if (state.settings.orient !== 'free') updateSettings({ orient: 'free' }); },
     onGestureEnd: () => { if (gestureActive) { gestureActive = false; applyOrientation(); } },
     onPoint: (sx, sy) => { state.cursor = view.screenToGeo(sx, sy); renderCursor(); },
     zoomAnchor: followAnchor,
@@ -189,7 +194,7 @@ function wireEvents() {
   on('proc', () => { if (syncProcRoutes()) emit('route'); requestDraw(); });   // 手順の作図を直したら、それを使うルートの点も直す
   on('toEditor', (text) => { if (fillFromMap(text)) openSheet('proc'); });
   bindLabelDrag($('map'), requestDraw);
-  $('compass').addEventListener('click', () => updateSettings({ follow: false }));
+  $('compass').addEventListener('click', () => updateSettings({ follow: false, orient: 'north' }));
   setInterval(() => { refreshNavGeo(); requestDraw(); }, NAVGEO_REFRESH_MS);
   on('alert', renderNavOverlays);
   setInterval(() => { renderNavOverlays(); renderDataPanel(); }, 1000);

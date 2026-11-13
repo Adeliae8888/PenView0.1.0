@@ -59,7 +59,7 @@ result.gridDdm = await page.evaluate(() => ({
 }));
 await page.screenshot({ path: `${outDir}/3b_grid_ddm.png` });
 
-// ドラッグで◎OFF → North-up に戻る
+// ドラッグで◎OFF → 向きはそのまま（0.2.4〜。North-up は方位アイコン）
 await page.mouse.move(600, 400); await page.mouse.down(); await page.mouse.move(500, 350, { steps: 5 }); await page.mouse.up();
 await page.waitForTimeout(600);
 result.afterDrag = await page.evaluate(() => ({

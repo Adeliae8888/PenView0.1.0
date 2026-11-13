@@ -14,7 +14,8 @@ const DEFAULT_SETTINGS = {
   varMode: 'auto',                   // 'auto'（国土地理院近似式）| 'manual'
   manualVar: -8,                     // E=正 / W=負
   bullseye: { lat: 36.3474, lon: 141.3743, name: 'BULL' },
-  follow: true,                      // ON＝自機を中央に固定して Heading(Track)-up、OFF＝North-up で自由に移動
+  follow: true,                      // ◎ ON＝自機を中央に固定
+  orient: 'track',                   // 地図の向き：track＝Track-up（◎ を押したとき）、north＝North-up（方位アイコン）、free＝回転・スワイプで決めた向きのまま
   view: { lat: 36.3, lon: 139.5, scale: 0.6 },   // scale = px/km
   layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true, grid: false, procedures: true },
   airspaceClasses: Object.fromEntries(Object.keys(AIRSPACE_CLASSES).map((k) => [k, !['other', 'info', 'heli', 'glider'].includes(k)])),

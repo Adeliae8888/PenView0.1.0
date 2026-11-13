@@ -101,6 +101,8 @@ await page.evaluate(async () => { const g = await import('/js/gps.js'); g.update
 await page.waitForTimeout(600);
 R.panelApp = await panel();
 R.missedBtn = await page.$$eval('[data-nav="missed"]', (b) => b.length);
+R.divertNear = await page.$$eval('.dp-actions [data-nav="divert"]', (b) => b.length);   // 目的飛行場から 30NM 以内
+R.phaseInRow = await page.$$eval('.dp-actions', (rows) => rows.length + ':' + [...rows[0].querySelectorAll('button')].map((b) => b.textContent).join(','));
 await page.screenshot({ path: `${outDir}/rp4_app.png` });
 await page.click('[data-nav="missed"]');
 await page.waitForTimeout(400);
@@ -114,17 +116,22 @@ await mod('/js/route.js', `const r = m.activeRoute(); window.__ma = r.points.at(
 await page.evaluate(async () => { const g = await import('/js/gps.js'); g.updateSim({ lat: window.__ma.lat, lon: window.__ma.lon, gs: 250, alt: 4000 }); });
 await page.waitForTimeout(600);
 R.atMahf = await mod('/js/route.js', `const r = m.activeRoute(); return { active: m.pointTag(r.points, r.activeIdx) + ' ' + r.points[r.activeIdx].name, alt: r.alternate.length }`);
-// DIV の値＝現在位置から RJSK まで（区間計算）＋進入着陸 600＋予備 1500
+R.divBeforeDivert = await page.$$eval('.dp-fuel .divert', (d) => d.length);   // DIV は DIVERT を押した後だけ
+// 他所から戻る：30NM より遠いと DIVERT は出ない（復行後は出る）
+R.divertAfterMissed = await page.$$eval('[data-nav="divert"]', (b) => b.length);
+
+// --- DIVERT → 行き先は ALT、DIV＝現在位置から RJSK まで（区間計算）＋進入着陸 600＋予備 1500
+await page.click('[data-nav="divert"]');
+await page.waitForTimeout(600);
 R.divCheck = await page.evaluate(async () => {
   const [fp, nav, st] = await Promise.all([import('/js/flightplan.js'), import('/js/nav.js'), import('/js/state.js')]);
   const n = nav.navContext(); const own = st.state.own;
-  const leg = fp.computeLeg(own, n.route.alternate[0], n.cfg, { wind: n.route.wind, dev: 0, direct: true });
-  return { shown: document.querySelector('.dp-fuel .divert')?.textContent, expected: Math.round(leg.fuel + 600 + 1500) };
+  const to = n.route.points.at(-1);
+  const leg = fp.computeLeg({ ...own, alt: own.alt }, to, n.cfg, { wind: n.route.wind, dev: 0, direct: true });
+  const pl = n.plan.legs.find((l) => l.toIndex === n.route.activeIdx);
+  return { shown: document.querySelector('.dp-fuel .divert')?.textContent, expected: Math.round(leg.fuel + 600 + 1500), alerts: document.querySelectorAll('.alert-flash, .flash').length,
+    dbg: { planLeg: [pl.dist, pl.fuel, pl.from?.alt], myLeg: [leg.dist, leg.fuel], origin: n.route.flight.directOrigin, own: [own.lat, own.lon, own.alt] } };
 });
-
-// --- DIVERT → 行き先は ALT
-await page.click('[data-nav="divert"]');
-await page.waitForTimeout(400);
 R.afterDivert = await mod('/js/route.js', `const r = m.activeRoute(); return { active: m.pointTag(r.points, r.activeIdx) + ' ' + r.points[r.activeIdx].name, dir: r.flight.directOrigin?.name }`);
 R.panelDivert = await panel();
 await page.screenshot({ path: `${outDir}/rp6_divert.png` });

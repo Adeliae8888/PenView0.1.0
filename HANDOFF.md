@@ -1,4 +1,38 @@
-# HANDOFF 0.2.3（2026-11-11 パブリッシュ）
+# HANDOFF 0.2.4（2026-11-13 パブリッシュ）
+
+## できたこと（ユーザー決定は SPEC.md §2・§8）
+A. **DIVERT**：目的飛行場から 30NM 以内か MISSED APP の後にボタン（▲▼ LOG FUEL の段の右端、小さく。MISSED APP も同じ段へ移動）。進入前でもその位置から代替経路へ直行。DIV は DIVERT を押した後だけ表示（DIV＝EST − 代替飛行場の接地見込み＋予備）。復行・DIVERT 後は HOME BINGO を判定しない（点滅なし）。復行中（DIVERT 前）の燃料欄は EST と ALT（LAND は出さない）
+B. **地図の操作**：settings.orient（track／north／free）を追加。◎＝follow＋track（トグルではない）、方位アイコン＝north、スワイプ（30px 以上）＝follow を外し free、2本指の回転（10° 以上）＝free（follow は保つ）、ピンチ＝そのまま。2本指が触れた操作は指を全部離すまで1本指の移動をしない（タブレットでピンチで ◎ が外れていた原因：指を離す順のずれで1本指の移動と判定）
+C. **手順のパーツ「旋回して針路」（turnhdg）**：dir（L/R）・hdg（°M）・turn（半径、既定 250KIAS・25°・その時の高度）・end（DME／フィックス・ラジアル／高度）。弧の後に直進。高度で終わるときは旋回中の上昇も数える。180° 超の旋回も可
+- **DIRECT の燃料の修正**：直行線の出発高度に、実行したときの自機高度を使う（directOrigin.alt）。これまでは飛ばした点の手前の点の高度（復行後の DIVERT では MAPT の 600ft）から上昇する計算になり、燃料を多めに見積もっていた
+- RJAH GOPVU1（RWY03／21、DAIGO TRANSITION つき4本）の読込用 JSON を別に渡した（AIP AD2.24-SID-5 の文字から作成。RWY HDG 030/210・RWY03 の会合針路 092° は補った値）
+
+## ファイル
+| ファイル | 変更 |
+|---|---|
+| js/map-view.js | attachGestures を分割（panStep・pinchStep）、rotateAt、pinchInfo に角度 |
+| js/main.js / ui.js / state.js | applyOrientation（orient）、onUserMove・onUserRotate、方位アイコン、◎、settings.orient |
+| js/ui-nav.js / nav.js / route.js / flightplan.js | phaseButtons（30NM）、fuelHtml、fuelGates、liveNav の DIV、executeDivert（元の目的地を DST に）、directOrigin.alt、divertNeed は削除 |
+| js/procgeo.js / procedures.js / ui-proc.js | turnHeadingGeometry、courseLabel、PART_TYPES・newPart、エディターの欄 |
+| tests/ | 単体 28（新規：進入前の DIVERT、旋回して針路）、e2e-gesture.mjs（新規・タッチ）、e2e-route-proc（30NM・DIV の位置と値） |
+
+## 検証
+- 単体 28/28。画面 e2e・e2e-nav・e2e-proc・e2e-route-proc・e2e-gesture すべてエラー 0。e2e-data は国土交通省 zip が手元に無く未実行
+- e2e-gesture（CDP のタッチ）：1本目が 12px ずれてから2本目が触れるピンチ・指を1本残して動かす → ◎ のまま、自機は中央。2本指で 40° 回す → 向きが 40° 変わり、航跡が変わっても回らない、自機は中央。◎ → 航跡 180° が上。スワイプ → ◎ OFF・向きそのまま・航跡が変わっても回らない。◎ → 270° が上。方位アイコン → North-up、その後のスワイプでも North-up
+- e2e-route-proc：MAPT（RJAH から 30NM 以内）で MISSED APP と DIVERT が ▲▼ LOG FUEL の段に並ぶ。復行後は DIV なし。DIVERT 後の DIV 3,774 ＝ 独立計算（現在位置 → RJSK の区間燃料＋進入着陸 600＋予備 1500）と一致
+- 注意：CDP の touchEnd に渡すのは「離した指」。残す指を渡すと別の指として扱われる
+- FUNCTIONS：372 → 374（増：panStep, pinchStep, turnHeadingGeometry／減：divertNeed）。60 行超は createView のみ
+
+## 残り
+- Android タブレット実機での確認（特にピンチ・回転・スワイプの感触。PAN_RELEASE_PX＝30、ROTATE_START_DEG＝10 は実機で調整するかも）
+
+## 0.2.5 の予定（0.2.4 を見てから決める）
+D. AIP の SID の PDF からアプリ内で手順を作る（pdf.js 同梱、文字を読む方式。補う値＝RWY HDG・滑走路端・会合針路〔既定 45°〕・旋回速度とバンク・上昇勾配〔既定 3.3%〕・名前だけのフィックスの座標。既定値は設定で変えられ、取込後の確認画面で補った箇所を黄色で示す）。書き方の違う SID の PDF を 5〜10 枚もらいたい
+
+---
+
+
+# HANDOFF 0.2.3（2026-11-11 パブリッシュ）— 以下は前の版の記録
 
 ## できたこと（ユーザー決定は SPEC.md §8「0.2.3 の決定」）
 - **手順のルート連携**：ROUTE の編集で、DEP の飛行場に SID、DST の飛行場に STAR・APP があれば選択欄が出る。選ぶとフィックスが STPT として入る（DEP → SID → 経路 → STAR → APP → DST）。印「2 SID」等。手順の点は ↑↓× なし（「手順」表示。外すには手順を「なし」に）

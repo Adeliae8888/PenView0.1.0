@@ -8,6 +8,8 @@ const TAP_MOVE_PX = 8;
 const TAP_TIME_MS = 350;
 const LONG_PRESS_MS = 550;
 const WHEEL_ZOOM = 1.0015;
+const PAN_RELEASE_PX = 30;  // ◎ 中、1本指でこれだけ動かしたら ◎ を外して移動
+const ROTATE_START_DEG = 10; // 2本指でこれだけ回したら回転を始める（ピンチ中の小さなねじれでは回さない）
 
 export function createView(svg, proj) {
   const v = { cx: 0, cy: 0, scale: 0.6, rot: 0, width: 1, height: 1, listeners: new Set(), proj };
@@ -70,75 +72,94 @@ export function createView(svg, proj) {
     changed();
   };
   v.setRotation = (deg) => { v.rot = deg; changed(); };
+  v.rotateAt = (deg, sx, sy) => {            // 画面上の点 (sx,sy) を中心に回す（時計回り正）
+    const before = v.screenToWorld(sx, sy);
+    v.rot += deg;
+    const after = v.screenToWorld(sx, sy);
+    v.cx += before.x - after.x; v.cy += before.y - after.y;
+    changed();
+  };
   v.onChange = (fn) => v.listeners.add(fn);
 
   function changed() { v.listeners.forEach((fn) => fn(v)); }
   return v;
 }
 
-/* ==== attachGestures ==== 1本指=移動、2本指=拡大縮小、ホイール=拡大縮小、短いタップ=選択
+/* ==== attachGestures ==== 1本指=移動、2本指=拡大縮小と回転、ホイール=拡大縮小、短いタップ=選択
  * onPoint：マウスの現在位置／シングルタッチした位置（カーソル座標表示用）。onGestureEnd：指・ボタンを離した
- * zoomAnchor()：拡大縮小の中心を固定したいとき {x,y} を返す（追従中は自機）。onUserMove はドラッグ移動のときだけ
+ * zoomAnchor()：拡大縮小・回転の中心を固定したいとき {x,y} を返す（◎ 中は自機）
+ * onUserMove：1本指で PAN_RELEASE_PX 以上動かしたときだけ（◎ を外す）。2本指が触れた操作では、指を全部離すまで移動しない（ピンチで ◎ が外れない）
+ * onUserRotate：2本指で ROTATE_START_DEG 以上回したとき（以後はその操作の間ずっと回る）
  * タッチ：シングルタップ＝onPoint のみ、長押し＝onLongPress。マウス：クリック＝onTap、右クリック＝onLongPress */
-export function attachGestures(svg, view, { onTap, onLongPress, onUserMove, onPoint, onGestureEnd, zoomAnchor }) {
+export function attachGestures(svg, view, handlers) {
+  const { onTap, onLongPress, onPoint, onGestureEnd, zoomAnchor } = handlers;
   let pressTimer = null;
   const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
   const local = (e) => { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const pointers = new Map();
-  let tapStart = null;
-  let pinch = null;
+  const g = { pointers: new Map(), tapStart: null, pinch: null, multi: false, panned: 0, rotating: false, turned: 0 };
   svg.addEventListener('pointerdown', (e) => {
     svg.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    tapStart = pointers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
-    if (pointers.size === 1) {
+    g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    g.tapStart = g.pointers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
+    if (g.pointers.size === 1) {
       const p = local(e);
       onPoint?.(p.x, p.y);
-      if (e.pointerType !== 'mouse') {
-        pressTimer = setTimeout(() => { pressTimer = null; tapStart = null; onLongPress?.(p.x, p.y); }, LONG_PRESS_MS);
-      }
+      if (e.pointerType !== 'mouse') pressTimer = setTimeout(() => { pressTimer = null; g.tapStart = null; onLongPress?.(p.x, p.y); }, LONG_PRESS_MS);
     } else cancelPress();
-    if (pointers.size === 2) pinch = pinchInfo(pointers);
+    if (g.pointers.size === 2) { g.pinch = pinchInfo(g.pointers); g.multi = true; }
   });
-
   svg.addEventListener('pointermove', (e) => {
-    const prev = pointers.get(e.pointerId);
+    const prev = g.pointers.get(e.pointerId);
     if (!prev) {
       if (e.pointerType === 'mouse') { const p = local(e); onPoint?.(p.x, p.y); }
       return;
     }
     const cur = { x: e.clientX, y: e.clientY };
-    pointers.set(e.pointerId, cur);
-    if (tapStart && Math.hypot(cur.x - tapStart.x, cur.y - tapStart.y) > TAP_MOVE_PX) { tapStart.moved = true; cancelPress(); }
-    if (pointers.size === 1 && (!tapStart || tapStart.moved)) {
-      view.panBy(cur.x - prev.x, cur.y - prev.y);
-      onUserMove?.();
-    } else if (pointers.size === 2 && pinch) {
-      const next = pinchInfo(pointers);
-      const r = svg.getBoundingClientRect();
-      const anchor = zoomAnchor?.();
-      if (anchor) view.zoomAt(next.dist / pinch.dist, anchor.x, anchor.y);
-      else {
-        view.zoomAt(next.dist / pinch.dist, next.x - r.left, next.y - r.top);
-        view.panBy(next.x - pinch.x, next.y - pinch.y);
-      }
-      pinch = next;
-    }
+    g.pointers.set(e.pointerId, cur);
+    if (g.tapStart && Math.hypot(cur.x - g.tapStart.x, cur.y - g.tapStart.y) > TAP_MOVE_PX) { g.tapStart.moved = true; cancelPress(); }
+    if (g.pointers.size === 1 && !g.multi && (!g.tapStart || g.tapStart.moved)) panStep(view, g, prev, cur, handlers);
+    else if (g.pointers.size === 2 && g.pinch) pinchStep(view, g, svg.getBoundingClientRect(), handlers);
   });
-
   const end = (e) => {
     const r = svg.getBoundingClientRect();
     cancelPress();
-    if (e.pointerType === 'mouse' && tapStart && !tapStart.moved && pointers.size === 1 && performance.now() - tapStart.t < TAP_TIME_MS) {
+    if (e.pointerType === 'mouse' && g.tapStart && !g.tapStart.moved && g.pointers.size === 1 && performance.now() - g.tapStart.t < TAP_TIME_MS) {
       onTap?.(e.clientX - r.left, e.clientY - r.top);
     }
-    pointers.delete(e.pointerId);
-    pinch = pointers.size < 2 ? null : pinch;
-    tapStart = null;
-    if (pointers.size === 0) onGestureEnd?.();
+    g.pointers.delete(e.pointerId);
+    g.pinch = g.pointers.size < 2 ? null : g.pinch;
+    g.tapStart = null;
+    if (g.pointers.size === 0) {
+      Object.assign(g, { multi: false, panned: 0, rotating: false, turned: 0 });
+      onGestureEnd?.();
+    }
   };
   ['pointerup', 'pointercancel'].forEach((t) => svg.addEventListener(t, end));
   attachWheelAndMenu(svg, view, local, { onLongPress, zoomAnchor });
+}
+
+/* ==== panStep ==== 1本指の移動。◎ 中は PAN_RELEASE_PX までは動かさない（指の震え・2本目の指が遅れて触れる間に ◎ が外れないように） */
+function panStep(view, g, prev, cur, { onUserMove, zoomAnchor }) {
+  const before = g.panned;
+  g.panned += Math.hypot(cur.x - prev.x, cur.y - prev.y);
+  if (zoomAnchor?.() && g.panned < PAN_RELEASE_PX) return;
+  if (before < PAN_RELEASE_PX && g.panned >= PAN_RELEASE_PX) onUserMove?.();
+  view.panBy(cur.x - prev.x, cur.y - prev.y);
+}
+
+/* ==== pinchStep ==== 2本指：拡大縮小（◎ 中は自機中心、それ以外は指の中点）と回転（ROTATE_START_DEG を超えてから） */
+function pinchStep(view, g, r, { zoomAnchor, onUserRotate }) {
+  const next = pinchInfo(g.pointers);
+  const anchor = zoomAnchor?.();
+  const ax = anchor ? anchor.x : next.x - r.left;
+  const ay = anchor ? anchor.y : next.y - r.top;
+  view.zoomAt(next.dist / g.pinch.dist, ax, ay);
+  const dAng = ((next.ang - g.pinch.ang + 540) % 360) - 180;
+  g.turned += dAng;
+  if (!g.rotating && Math.abs(g.turned) >= ROTATE_START_DEG) { g.rotating = true; onUserRotate?.(); view.rotateAt(g.turned, ax, ay); }
+  else if (g.rotating) view.rotateAt(dAng, ax, ay);
+  if (!anchor) view.panBy(next.x - g.pinch.x, next.y - g.pinch.y);
+  g.pinch = next;
 }
 
 /* ==== attachWheelAndMenu ==== PC：ホイールで拡大縮小、右クリックで地点オプション（タッチの長押しと同じ） */
@@ -154,5 +175,5 @@ function attachWheelAndMenu(svg, view, local, { onLongPress, zoomAnchor }) {
 
 function pinchInfo(pointers) {
   const [a, b] = [...pointers.values()];
-  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, dist: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), ang: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI };
 }
