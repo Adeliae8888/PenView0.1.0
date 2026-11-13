@@ -2,7 +2,7 @@
 import { state, emit, currentVariation } from './state.js';
 import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes, setActiveIdx, pointTag } from './route.js';
 import { procedures } from './procedures.js';
-import { PROC_ROLES, procChoices } from './route-proc.js';
+import { procChoices, destPoint } from './route-proc.js';
 import { syncProcRoutes } from './proc-wire.js';
 import { aircraftList } from './aircraft.js';
 import { resolvePoint, searchPoints } from './points.js';
@@ -48,16 +48,18 @@ function routeFields(r) {
       <label>kt<input type="number" data-rf="windSpd" value="${esc(val(r.wind?.spd))}" /></label>${f('isaDev', 'ISA偏差 ℃')}</div>`;
 }
 
-/* ==== procFields ==== DEP の飛行場に SID、DST の飛行場に STAR・APP があれば選べる。選ぶとフィックスが経路に入る */
-function procFields(r) {
+/* ==== procPicker ==== DEP の行に SID → その TRANSITION、DST の行に STAR の TRANSITION → STAR・APP。
+ * TRANSITION は選んだ SID（STAR）に属するものだけ出す。選ぶとフィックスが経路に入る */
+const ROLE_LABEL = { SID: 'SID', SID_TR: 'TRANSITION', STAR_TR: 'TRANSITION', STAR: 'STAR', APP: 'APP' };
+function procPicker(r, roles) {
   const one = (role) => {
     const choices = procChoices(r, role, procedures());
     if (!choices.length) return '';
     const opts = choices.map((p) => `<option value="${esc(p.id)}" ${r.procs?.[role] === p.id ? 'selected' : ''}>${esc(p.name || '(名前なし)')}${p.type === 'SID' && p.rwy ? ` RWY${esc(p.rwy)}` : ''}</option>`).join('');
-    return `<label class="grow">${role}<select data-rf="proc:${role}"><option value="">なし</option>${opts}</select></label>`;
+    return `<label>${ROLE_LABEL[role]}<select data-rf="proc:${role}"><option value="">なし</option>${opts}</select></label>`;
   };
-  const html = PROC_ROLES.map(one).join('');
-  return html ? `<div class="row wrap proc-pick">${html}</div>` : '';
+  const html = roles.map(one).join('');
+  return html ? `<tr class="proc-pick-row"><td></td><td colspan="3"><div class="row wrap proc-pick">${html}</div></td></tr>` : '';
 }
 
 function pointDetail(p, list, i) {
@@ -85,8 +87,16 @@ function pointRows(r, list) {
       <td><input type="number" class="alt" data-pf="alt" data-list="${list}" data-i="${i}" value="${esc(val(p.alt))}" /></td>
       <td class="nowrap">${act}<button type="button" class="btn sm" data-pact="detail" data-list="${list}" data-i="${i}">${open ? '閉' : '詳細'}</button>
       ${p.proc ? '<span class="muted">手順</span>' : `<button type="button" class="btn sm" data-pact="up" data-list="${list}" data-i="${i}">↑</button><button type="button" class="btn sm" data-pact="down" data-list="${list}" data-i="${i}">↓</button>
-      <button type="button" class="btn sm danger" data-pact="del" data-list="${list}" data-i="${i}">×</button>`}</td></tr>${open ? pointDetail(p, list, i) : ''}`;
+      <button type="button" class="btn sm danger" data-pact="del" data-list="${list}" data-i="${i}">×</button>`}</td></tr>${open ? pointDetail(p, list, i) : ''}${list === 'points' ? pickerAfter(r, arr, i) : ''}`;
   }).join('');
+}
+
+/* ==== pickerAfter ==== DEP の行の下に SID・TRANSITION、目的地（DST）の行の下に TRANSITION・STAR・APP */
+function pickerAfter(r, arr, i) {
+  if (arr.length < 2) return '';
+  if (i === 0) return procPicker(r, ['SID', 'SID_TR']);
+  if (arr[i] === destPoint(r)) return procPicker(r, ['STAR', 'STAR_TR', 'APP']);
+  return '';
 }
 
 function addRow(list) {
@@ -106,7 +116,7 @@ export function renderRouteTab(el) {
       <button type="button" class="btn" data-ract="new">新規</button>${r ? '<button type="button" class="btn" data-ract="dup">複製</button><button type="button" class="btn danger" data-ract="del">削除</button>' : ''}</div>
     ${r ? `<div class="row"><button type="button" class="btn ${r.id === activeRoute()?.id ? 'active' : ''}" data-ract="activate">${r.id === activeRoute()?.id ? '★ アクティブ' : 'アクティブにする'}</button>
       <button type="button" class="btn" data-ract="reset">飛行実績をリセット</button></div>
-    ${routeFields(r)}${procFields(r)}<h3>経路（DEP → STPT → DST）</h3><p class="muted legend">▶ 紫＝航法中のアクティブ STPT（▶ で変更）／ 枠＝編集で選択中の行（名前をタップ。追加は選択行の前後に入る）</p><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
+    ${routeFields(r)}<h3>経路（DEP → STPT → DST）</h3><p class="muted legend">▶ 紫＝航法中のアクティブ STPT（▶ で変更）／ 枠＝編集で選択中の行（名前をタップ。追加は選択行の前後に入る）</p><table class="pts">${pointRows(r, 'points')}</table>${addRow('points')}
     <h3>代替経路（DST → ALT）任意</h3><table class="pts">${pointRows(r, 'alternate')}</table>${addRow('alternate')}` : '<p class="muted">「新規」でルートを作成してください</p>'}
     <datalist id="ptSuggest"></datalist>`;
 }

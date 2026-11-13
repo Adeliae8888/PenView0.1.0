@@ -80,12 +80,20 @@ function palette(list) {
 /* ==== headerFields ==== 手順の基本：飛行場・種別・名前・開始点 */
 function headerFields(p) {
   const ad = procCtx?.findAirport(p.ad);
-  const rwys = Object.fromEntries([['', '—'], ...(ad?.rwy || []).map((r) => [r.d, `RWY${r.d}（${r.hdg}°T）`])]);
+  const rwys = Object.fromEntries([['', '—'], ...(ad?.rwy || []).map((r) => [r.d, `RWY${r.d}（${Number(r.hdg).toFixed(1)}°T）`])]);
   const start = p.type === 'SID'
     ? sel('rwy', '滑走路', p.rwy, rwys) + fld('derText', '滑走路端の座標（AIP AD 2.12）', p.derText, { type: 'text', grow: true, ph: '空欄＝標点・方位・長さから推定' })
-    : fld('startFix', '開始フィックス', p.startFix, { type: 'text', fix: true, grow: true }) + fld('startAlt', '開始高度 ft', p.startAlt);
+    : fld('startFix', '開始フィックス', p.startFix, { type: 'text', fix: true, grow: true }) + fld('startAlt', '開始高度 ft', p.startAlt) + (p.type === 'TRANSITION' ? parentFields(p) : '');
   return `<div class="row wrap">${fld('ad', '飛行場', p.ad, { type: 'text', ph: 'RJAH' })}${sel('type', '種別', p.type, Object.fromEntries(PROC_TYPES.map((t) => [t, t])))}${fld('name', '名前', p.name, { type: 'text', grow: true, ph: 'TOPAZ1' })}
     <label><input type="checkbox" data-pp="visible" ${p.visible !== false ? 'checked' : ''}/> 表示</label></div><div class="row wrap">${start}</div>`;
+}
+
+/* ==== parentFields ==== TRANSITION がつながる SID・STAR（同じ飛行場）。複数選べる */
+function parentFields(p) {
+  const cands = procedures().filter((q) => q.ad === p.ad && (q.type === 'SID' || q.type === 'STAR'));
+  const on = new Set(p.parents || []);
+  const chips = cands.map((q) => `<label class="chip"><input type="checkbox" data-parent="${esc(q.id)}" ${on.has(q.id) ? 'checked' : ''}/>${esc(procLabel(q))}</label>`).join('');
+  return `<div class="grow"><span class="muted">つながる手順</span><div class="chips">${chips || '<span class="muted">同じ飛行場の SID・STAR がありません</span>'}</div></div>`;
 }
 
 /* ==== renderProcTab ==== 一覧、または編集中の手順 */
@@ -140,6 +148,13 @@ export function bindProcTab(el, rerender) {
     const t = e.target;
     if (t.dataset.pvis) { const p = findProcedure(t.dataset.pvis); if (p) { p.visible = t.checked; saveProcedures(); emit('proc'); } return; }
     const p = findProcedure(editingId);
+    if (p && t.dataset.parent) {
+      const set = new Set(p.parents || []);
+      if (t.checked) set.add(t.dataset.parent); else set.delete(t.dataset.parent);
+      p.parents = [...set];
+      saveProcedures(); emit('proc'); rerender();
+      return;
+    }
     if (!p || !t.dataset.pp) return;
     setPath(p, t.dataset.pp, t.type === 'checkbox' ? t.checked : t.value, t.type === 'number');
     cleanup(p);

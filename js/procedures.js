@@ -2,7 +2,7 @@
 import { load, save } from './store.js';
 
 export const PROC_KEY = 'procedures';
-export const PROC_TYPES = ['SID', 'STAR', 'APP'];
+export const PROC_TYPES = ['SID', 'TRANSITION', 'STAR', 'APP'];   // TRANSITION は parents（つながる SID または STAR の id）を持つ
 export const PART_TYPES = { tf: '直線（→フィックス）', radial: 'ラジアル', heading: '針路で上昇', turnhdg: '旋回して針路', arc: 'DME アーク' };
 let list = [];
 const uid = (p) => `${p}-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
@@ -25,7 +25,7 @@ export function findProcedure(id) {
 }
 
 export function newProcedure(ad = '', type = 'SID') {
-  const p = { id: uid('pr'), ad: ad.toUpperCase(), type, name: '', rwy: '', derText: '', startFix: '', startAlt: null, parts: [], missed: [], visible: true };
+  const p = { id: uid('pr'), ad: ad.toUpperCase(), type, name: '', rwy: '', derText: '', startFix: '', startAlt: null, parents: [], parts: [], missed: [], visible: true };
   list.push(p);
   saveProcedures();
   return p;
@@ -65,5 +65,5 @@ export function mergeProcedures(items) {
 
 /* ==== procLabel ==== 一覧表示用 "RJAH SID TOPAZ1" */
 export function procLabel(p) {
-  return `${p.ad || '----'} ${p.type} ${p.name || '(名前なし)'}${p.type === 'SID' && p.rwy ? ` RWY${p.rwy}` : ''}`;
+  return `${p.ad || '----'} ${p.type === 'TRANSITION' ? 'TRANS' : p.type} ${p.name || '(名前なし)'}${p.type === 'SID' && p.rwy ? ` RWY${p.rwy}` : ''}`;
 }

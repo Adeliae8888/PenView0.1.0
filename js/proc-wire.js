@@ -8,12 +8,23 @@ import { saveProcedures, findProcedure } from './procedures.js';
 import { built } from './proc-render.js';
 import { routes, activeRoute, saveRoutes } from './route.js';
 import { syncRouteProcs, missedPoints } from './route-proc.js';
+import { aipRunways } from './aip-import.js';
+
+/* ==== findAirport ==== 飛行場（OpenAIP）。AIP AD2 を読み込んだ飛行場は滑走路を AIP のもの（L/R・THR・DER・標高）に置き換え */
+function findAirport(icao) {
+  const id = String(icao || '').toUpperCase();
+  const ad = state.data.airports.find((a) => a.icao === id) || null;
+  const rwy = aipRunways(id);
+  if (!rwy) return ad;
+  const arp = ad?.p || [rwy[0].thr.lon, rwy[0].thr.lat];
+  return { ...(ad || { icao: id, elev: rwy[0].elev || 0 }), p: arp, rwy, aip: true };
+}
 
 let ctxVersion = 0;
 const ctx = {
   findPoint: (name) => findPoint(name),
   resolvePoint: (text) => resolvePoint(text),
-  findAirport: (icao) => state.data.airports.find((a) => a.icao === String(icao || '').toUpperCase()) || null,
+  findAirport,
   get version() { return ctxVersion; },
 };
 setProcContext(ctx);
@@ -56,7 +67,7 @@ export function procSvg(view) {
   const list = procedures().filter((p) => p.id === editing || onRoute.has(p.id) || (s.layers.procedures !== false && p.visible !== false));
   const r = activeRoute();
   const activePart = r?.points[r.activeIdx]?.proc?.partId || null;
-  return list.length ? drawProcedures(view, list, ctx, editing, activePart) : '';
+  return list.length ? drawProcedures(view, list, ctx, editing, activePart, onRoute) : '';
 }
 
 /* ==== bindLabelDrag ==== 編集中の手順の注記をドラッグで動かす（地図のパン・長押しより先に受ける） */

@@ -18,6 +18,7 @@ import { renderRouteTab, bindRouteTab, renderLogTab } from './ui-route.js';
 import { renderAircraftTab, bindAircraftTab, renderPointsTab, bindPointsTab } from './ui-data.js';
 import { renderProcTab, bindProcTab, fillFromMap } from './ui-proc.js';
 import { loadProcedures } from './procedures.js';
+import { loadAipRunways } from './aip-import.js';
 import { procSvg, bindLabelDrag, bumpProcContext, syncProcRoutes } from './proc-wire.js';
 import { initAndroid } from './android.js';
 
@@ -220,7 +221,7 @@ async function boot() {
   requestPersistence();
   document.title = `${self.APP_NAME} ${self.APP_VERSION}`;
   await loadSettings();
-  await Promise.all([loadAircraft(), loadRoutes(), loadUserPoints(), loadNavData(), loadProcedures()]);
+  await Promise.all([loadAircraft(), loadRoutes(), loadUserPoints(), loadNavData(), loadProcedures(), loadAipRunways()]);
   const s = state.settings;
   proj = createProjection();
   view = createView($('map'), proj);

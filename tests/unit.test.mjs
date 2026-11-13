@@ -442,6 +442,7 @@ test('手順をルートに展開：並び・印・実距離・同期で利用�
   // 同期し直しても変わらない／利用者の TOS は残る／アクティブの点を保つ
   assert.equal(syncRouteProcs(r, getProc, build), false);
   r.points[4].tos = '0130';
+  r.flight.takeoffAt = Date.now();   // 飛行中は航法中の点を保つ（離陸前は最初の STPT に戻す：下で確認）
   r.activeIdx = 5;
   SID_ARC.parts[3].alt = { type: 'at', v: 15000 };
   assert.ok(syncRouteProcs(r, getProc, build));
@@ -454,6 +455,11 @@ test('手順をルートに展開：並び・印・実距離・同期で利用�
   syncRouteProcs(r, getProc, build);
   assert.deepEqual(r.points.map((p) => p.mark || p.id), ['dep', 'mid', 'APP', 'APP', 'APP', 'dst']);
   assert.equal(r.points[r.activeIdx].id, 'mid');
+  r.flight.takeoffAt = null;
+  r.activeIdx = 5;
+  r.procs.SID = 'sid1';
+  syncRouteProcs(r, getProc, build);
+  assert.equal(r.activeIdx, 1, '離陸前は最初の STPT から');
 });
 
 test('MISSED APP → 復行の点、DIVERT は手動、リセットで計画に戻る', () => {
@@ -527,4 +533,99 @@ test('旋回して針路：左旋回 HDG 002°（ティアドロップ）。弧�
   // 会合点は HUC R047 上
   near(bearingTrue(ST.HUC, fixB), (47 + ST.HUC.dec + 360) % 360, 0.1, 'R047 上（交点の数値誤差 5m 程度）');
   near(fixB.pathNm, arcLen + distanceNm(p1, fixB), 0.01, '実距離＝弧＋直線');
+});
+
+/* ==== 0.2.5 AIP の PDF ==== */
+import { unshift, toLines } from '../js/pdf-text.js';
+import { parseAd2, findTables, waypointTable, procName, altConstraint, oppositeRwy, tablesToProcs, linkTransitions } from '../js/aip-parse.js';
+
+const it = (s, x, y, w = s.length * 5, h = 8) => ({ s, x, y, w, h });
+const pageOf = (items) => ({ items, lines: toLines(items) });
+
+test('ずれた文字コードを戻す・名前・高度・反対側の滑走路', () => {
+  assert.equal(unshift('&OLPE\x03WR\x03\x19\x13\x13)7\x03RQ\x03+\'*\x13\x15\x1b\xdb\x0f'), 'Climb to 600FT on HDG028°,');
+  assert.equal(procName('TIARA TWO A DEPARTURE'), 'TIARA2A');
+  assert.equal(procName('KURIS 1G ARRIVAL'), 'KURIS1G');
+  assert.equal(procName('HITAKA ONE DEPARTURE'), 'HITAKA1');
+  assert.equal(procName('PANSY TRANSITION'), 'PANSY');
+  assert.deepEqual(altConstraint(['-7000', '+4000']), { type: 'between', v: 7000, v2: 4000 });
+  assert.deepEqual(altConstraint(['+FL170']), { type: 'above', v: 17000 });
+  assert.deepEqual(altConstraint(['9000']), { type: 'at', v: 9000 });
+  assert.equal(oppositeRwy('03L'), '21R');
+  assert.equal(oppositeRwy('16R'), '34L');
+  assert.equal(oppositeRwy('05'), '23');
+});
+
+test('AD 2.12／2.13：L/R・THR・DER（反対側の末端がずれていればその分外へ）・真方位が無ければ両端から', () => {
+  // 03L：THR A、21R：THR B（A の真北 2000m）。21R は着陸用の末端が 300m ずれている（TORA 2500・LDA 2200）
+  const A = { lat: 36.0, lon: 140.0 };
+  const B = destination(A, 0, 2000 / 1852);
+  const dmsS = (v, deg) => { const d = Math.floor(v); const m = Math.floor((v - d) * 60); const s = ((v - d) * 60 - m) * 60; return `${String(d).padStart(deg, '0')}${String(m).padStart(2, '0')}${s.toFixed(2).padStart(5, '0')}`; };
+  const items = [
+    it('XXXX AD 2.12 RUNWAY PHYSICAL CHARACTERISTICS', 100, 10),
+    it('03L', 60, 40), it('to be issued later', 110, 40), it('2500×45', 200, 40), it(`${dmsS(A.lat, 2)}N`, 330, 40), it('THR ELEV:107ft', 420, 40),
+    it(`${dmsS(A.lon, 3)}E`, 330, 50),
+    it('21R', 60, 70), it('2500×45', 200, 70), it(`${dmsS(B.lat, 2)}N`, 330, 70), it('THR ELEV:100ft', 420, 70),
+    it(`${dmsS(B.lon, 3)}E`, 330, 80),
+    it('XXXX AD 2.13 DECLARED DISTANCES', 100, 100),
+    it('03L', 60, 120), it('2500', 150, 120), it('2500', 220, 120), it('2500', 290, 120), it('2500', 360, 120),
+    it('21R', 60, 135), it('2500', 150, 135), it('2500', 220, 135), it('2500', 290, 135), it('2200', 360, 135),
+    it('XXXX AD 2.14 APPROACH', 100, 160),
+  ];
+  const r = parseAd2([pageOf(items)]);
+  assert.equal(r.icao, 'XXXX');
+  const a = r.runways.find((x) => x.d === '03L');
+  near(a.hdg, 0, 0.01, '真方位は両端から');
+  assert.equal(a.elev, 107);
+  near(distanceNm(A, a.der) * 1852, 2300, 1, 'DER＝反対側 THR から 300m 外');
+  near(distanceNm(B, r.runways.find((x) => x.d === '21R').der) * 1852, 2000, 1, '21R の DER は 03L の THR（ずれなし）');
+});
+
+test('RNAV の表：通し番号の行、上下のコース・2段の高度、座標表、TRANSITION の親', () => {
+  const head = [it('Serial', 110, 100), it('Path', 150, 100), it('Waypoint', 185, 100), it('Fly', 228, 100), it('Course', 250, 100), it('Magnetic', 290, 100),
+    it('Distance', 328, 100), it('Turn', 370, 100), it('Altitude', 398, 100), it('Speed', 440, 100), it('Navigation', 505, 100), it('Number', 110, 110)];
+  const row = (y, n, path, w, d, alt) => [it(n, 118, y), it(path, 155, y), it(w, 187, y), it('-', 230, y), it('-7.8', 294, y), it(d, 332, y), it('-', 374, y), it(alt, 402, y), it('-', 448, y), it('RNAV1', 512, y)];
+  const items = [
+    it('HITAKA ONE DEPARTURE', 110, 60), it('RWY21R', 110, 80), ...head,
+    it('208', 257, 126), ...row(131, '001', 'VA', '-', '-', '+600'), it('(199.8)', 251, 136),
+    ...row(154, '002', 'DF', 'H1R00', '-', '-3000'),
+    it('067', 257, 172), it('-7000', 402, 172), ...row(177, '003', 'TF', 'LICEN', '8.5', ' '), it('(059.5)', 251, 182), it('+4000', 401, 182),
+    it('Waypoint Coordinates', 286, 300), it('H1R00', 255, 320), it('361413.1N/1401954.3E', 328, 320), it('LICEN', 255, 340), it('361830.6N/1402857.4E', 328, 340),
+    it('RWY21R : 4.1% climb gradient required up to 600FT.', 66, 400),
+  ].filter((x) => x.s.trim());
+  const pages = [pageOf(items)];
+  const t = findTables(pages);
+  assert.equal(t.length, 1);
+  assert.deepEqual(t[0].rwys, ['21R']);
+  assert.deepEqual(t[0].legs.map((l) => [l.path, l.wpt, l.course]), [['VA', null, 208], ['DF', 'H1R00', null], ['TF', 'LICEN', 67]]);
+  assert.deepEqual(t[0].legs[2].alt, { type: 'between', v: 7000, v2: 4000 });
+  near(waypointTable(pages).LICEN.lat, 36 + 18 / 60 + 30.6 / 3600, 1e-9, '座標表');
+  const procs = tablesToProcs(pages, { icao: 'RJAH', side: 'SID', source: { file: 'x.pdf' } });
+  assert.equal(procs[0].id, 'aip-RJAH-SID-HITAKA1-21R');
+  assert.deepEqual(procs[0].parts[0], { id: 'aip-RJAH-SID-HITAKA1-21R-001', name: '', alt: null, speed: null, turn: null, type: 'heading', hdg: 208, end: { type: 'alt', alt: 600, grad: 4.1 } });
+  assert.deepEqual(Object.keys(procs[0].wpts), ['H1R00', 'LICEN']);
+  // TRANSITION：SID の PDF のものは、最初のフィックスで終わる SID にだけつながる（同じフィックスから始まる STAR にはつながない）
+  const tr = { id: 'tr', type: 'TRANSITION', ad: 'RJAH', side: 'SID', startFix: 'LICEN', parts: [{ type: 'tf', to: 'OGITU' }], parents: [] };
+  const star = { id: 'st', type: 'STAR', ad: 'RJAH', startFix: 'OGITU', parts: [] };
+  linkTransitions([tr], [...procs, star]);
+  assert.deepEqual(tr.parents, ['aip-RJAH-SID-HITAKA1-21R']);
+});
+
+test('ルートの TRANSITION：選んだ SID に属するものだけ選べる・並び・SID を変えると外れる', () => {
+  const sidA = { id: 'A', type: 'SID', ad: 'RJAH', rwy: '21', parts: [{ id: 'a1', type: 'tf', to: 'MENOU' }] };
+  const sidB = { id: 'B', type: 'SID', ad: 'RJAH', rwy: '21', parts: [{ id: 'b1', type: 'tf', to: 'GOT' }] };
+  const trA = { id: 'TA', type: 'TRANSITION', ad: 'RJAH', startFix: 'MENOU', parents: ['A'], parts: [{ id: 't1', type: 'tf', to: 'GOT' }] };
+  const trB = { id: 'TB', type: 'TRANSITION', ad: 'RJAH', startFix: 'GOT', parents: ['B'], parts: [{ id: 't2', type: 'tf', to: 'MENOU' }] };
+  const list = [sidA, sidB, trA, trB];
+  const ctx = { ...PCTX, findAirport: () => ({ icao: 'RJAH', elev: 105, p: [140.415, 36.1811], rwy: [{ d: '21', hdg: 202, len: 2700 }] }) };
+  const r = procRoute();
+  r.procs = { SID: 'A', SID_TR: null, STAR_TR: null, STAR: null, APP: null };
+  assert.deepEqual(procChoices(r, 'SID_TR', list).map((p) => p.id), ['TA']);
+  r.procs.SID_TR = 'TA';
+  syncRouteProcs(r, (id) => list.find((p) => p.id === id), (p) => buildProcedure(p, ctx));
+  assert.deepEqual(r.points.map((p) => p.mark ? `${p.mark}:${p.name}` : p.id), ['dep', 'SID:MENOU', 'TR:GOT', 'mid', 'dst']);
+  r.procs.SID = 'B';
+  syncRouteProcs(r, (id) => list.find((p) => p.id === id), (p) => buildProcedure(p, ctx));
+  assert.equal(r.procs.SID_TR, null, '別の SID に変えたら TRANSITION は外れる');
+  assert.deepEqual(r.points.map((p) => p.mark ? `${p.mark}:${p.name}` : p.id), ['dep', 'SID:GOT', 'mid', 'dst']);
 });

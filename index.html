@@ -145,6 +145,17 @@
     </section>
 
     <section class="group">
+      <h3>AIP の PDF（滑走路・RNAV の SID/STAR）</h3>
+      <div class="row wrap">
+        <label class="btn primary">PDF・zip を読み込む<input type="file" id="aipFile" accept=".zip,.pdf" multiple hidden /></label>
+      </div>
+      <p class="muted">国土交通省の空港ごとの zip（AD2・SID・STAR の PDF）をそのまま選べます。AD2 から滑走路（L/R・末端・離陸側の端・標高）、RNAV の SID・STAR・TRANSITION を表から読みます。読み取った内容を確かめてから取り込みます。</p>
+      <p id="aipStatus" class="muted"></p>
+      <div id="aipReview"></div>
+      <div id="aipList"></div>
+    </section>
+
+    <section class="group">
       <h3>データの書き出し・読込</h3>
       <div id="ioRows"></div>
       <input type="file" id="ioFile" accept=".json,application/json" hidden />

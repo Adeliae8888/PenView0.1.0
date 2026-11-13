@@ -37,7 +37,7 @@ export function setActiveRoute(id) {
 export function newRoute(name = `ROUTE ${store.routes.length + 1}`) {
   const r = {
     id: uid('rt'), name, points: [], alternate: [], activeIdx: 1, configRef: null, startFuel: null, joker: null, bingo: null,
-    plannedTakeoff: null, wind: null, isaDev: 0, cruiseAlt: DEFAULT_CRUISE_ALT, bingoPoint: null, homeBingo: null, homeBingoPointId: null, procs: { SID: null, STAR: null, APP: null }, flight: { takeoffAt: null, checks: [], directOrigin: null },
+    plannedTakeoff: null, wind: null, isaDev: 0, cruiseAlt: DEFAULT_CRUISE_ALT, bingoPoint: null, homeBingo: null, homeBingoPointId: null, procs: { SID: null, SID_TR: null, STAR_TR: null, STAR: null, APP: null }, flight: { takeoffAt: null, checks: [], directOrigin: null },
   };
   store.routes.push(r);
   if (!store.activeId) store.activeId = r.id;
@@ -78,7 +78,7 @@ export function addPoint(route, src, list = 'points', index = null) {
     arr.splice(i, 0, p);
     if (list === 'points' && i <= route.activeIdx && arr.length > 2) route.activeIdx += 1;   // アクティブの点は変えない
   } else if (list === 'points' && arr.length >= 2) {
-    const arrival = arr.findIndex((q) => q.proc && q.proc.role !== 'SID');   // STAR・APP があればその手前
+    const arrival = arr.findIndex((q) => ['STAR_TR', 'STAR', 'APP'].includes(q.proc?.role));   // STAR（の TRANSITION）・APP があればその手前
     arr.splice(arrival > 0 ? arrival : arr.length - 1, 0, p);
   } else arr.push(p);
   saveRoutes();

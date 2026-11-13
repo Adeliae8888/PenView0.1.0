@@ -188,7 +188,8 @@ function drawRoute(view, nav, procGeom) {
   });
   pts.forEach((p, i) => {
     const label = `${pointTag(pts, i)} ${p.name}`;
-    out += stptMarker(view, p, label, p.skipped ? 'skip' : i === r.activeIdx ? 'active' : '');
+    const pp = p.mark && p.mark !== 'A' && p.mark !== 'ALT' ? ` pp-${p.mark.toLowerCase()}` : '';   // 手順の点は手順の色
+    out += stptMarker(view, p, label, (p.skipped ? 'skip' : i === r.activeIdx ? 'active' : '') + pp);
   });
   (r.alternate || []).forEach((p, i) => { out += stptMarker(view, p, i === r.alternate.length - 1 ? `ALT ${p.name}` : `A${i + 1} ${p.name}`, 'alt'); });
   return out;

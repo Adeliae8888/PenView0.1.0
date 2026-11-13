@@ -314,9 +314,23 @@ table.pts td.pick { cursor: pointer; }
 .zoom-wide .nd-line.nd-aip-rnav, .zoom-wide .nd-line.nd-aip-ats, .zoom-wide .nd-line.nd-aip-oceanic, .zoom-wide .nd-line.nd-conv { display: none; }
 
 /* ==== 手順（SID/STAR/APP） ==== */
-.proc { --pc: #67e8f9; }
-.proc.proc-star { --pc: #a3e635; }
+/* 手順の色（0.2.5）：WPT の水色・ルートの白・航法中の紫と見分けられる色 */
+.proc { --pc: #4ade80; }
+.proc.proc-transition { --pc: #2dd4bf; }
+.proc.proc-star { --pc: #fb923c; }
 .proc.proc-app { --pc: #fde047; }
+#overlay .proc.on-route .proc-line { stroke-width: 2.6; }
+#overlay .proc-wpt path { fill: none; stroke: var(--pc); stroke-width: 1.4; }
+#overlay .proc-wpt text { fill: var(--pc) !important; font-size: 10px !important; font-weight: 600; }
+/* ルートに入れた手順の点（STPT）は手順の色 */
+.stpt.pp-sid circle { stroke: #4ade80; }
+.stpt.pp-tr circle { stroke: #2dd4bf; }
+.stpt.pp-star circle { stroke: #fb923c; }
+.stpt.pp-app circle, .stpt.pp-ma circle { stroke: #fde047; }
+.stpt.pp-sid text { fill: #bbf7d0 !important; }
+.stpt.pp-tr text { fill: #99f6e4 !important; }
+.stpt.pp-star text { fill: #fed7aa !important; }
+.stpt.pp-app text, .stpt.pp-ma text { fill: #fef08a !important; }
 #overlay .proc-line { fill: none; stroke: var(--pc); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 #overlay .proc-line.missed { stroke-dasharray: 8 6; opacity: 0.85; }
 #overlay .proc.editing .proc-line { stroke-width: 3; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.9)); }
@@ -340,3 +354,17 @@ ul.warn { margin: 6px 0; padding-left: 18px; }
 .dp-actions .btn.phase-btn { flex: 0 0 auto; font-size: 11px; padding: 0 8px; background: #431407; border-color: #f97316; color: #fed7aa; font-weight: 800; }
 .dp-fuel .divert.bad { color: var(--danger); }
 .dp-fuel small { font-size: 11px; color: var(--muted); font-weight: 600; }
+/* 0.2.5 DEP・DST の行の手順の選択 */
+.pts tr.proc-pick-row td { padding-top: 0; border-top: none; }
+.proc-pick { gap: 6px; }
+.proc-pick label { font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.proc-pick select { max-width: 16em; }
+/* 0.2.5 AIP の取り込み確認 */
+.aip-review { border: 1px solid var(--line, #334155); border-radius: 8px; padding: 8px; margin: 6px 0; max-height: 60vh; overflow: auto; }
+.aip-review h4 { margin: 8px 0 4px; }
+.aip-row { display: flex; gap: 8px; align-items: flex-start; padding: 4px 0; border-bottom: 1px solid rgba(148, 163, 184, 0.15); }
+.aip-row input { margin-top: 3px; }
+.aip-review .small, .aip-review small { font-size: 11px; }
+.aip-review .warn.small { color: #fbbf24; }
+.aip-review .tag { font-size: 10px; border: 1px solid #f59e0b; color: #fbbf24; border-radius: 4px; padding: 0 4px; }
+.aip-review details summary { cursor: pointer; padding: 4px 0; }

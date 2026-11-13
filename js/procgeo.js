@@ -103,9 +103,10 @@ export function resolveFix(text, ctx) {
   return p ? { name: p.name || '', lat: p.lat, lon: p.lon } : null;
 }
 
-/* ==== runwayStart ==== SID の開始点（滑走路端＝DER）：飛行場標点から方位・長さの半分だけ先。上書き座標があればそれ */
+/* ==== runwayStart ==== SID の開始点（滑走路端＝DER）：上書き座標 → AIP AD2 から読んだ DER → 飛行場標点から方位・長さの半分だけ先（推定） */
 export function runwayStart(airport, rwy, override) {
   if (override && Number.isFinite(override.lat)) return { ...override, hdg: rwy?.hdg ?? 0, estimated: false };
+  if (rwy?.der && Number.isFinite(rwy.der.lat)) return { lat: rwy.der.lat, lon: rwy.der.lon, hdg: rwy.hdg ?? 0, estimated: false, aip: true };
   const arp = { lat: airport.p[1], lon: airport.p[0] };
   const hdg = rwy?.hdg ?? 0;
   const p = destination(arp, hdg, ((rwy?.len || 0) / 2) / M_PER_NM);
@@ -258,14 +259,31 @@ function buildLegs(parts, start, ctx, out, dashed) {
   return { cur, prevGeom };
 }
 
-/* ==== buildProcedure ==== 手順 → { segments:[{pts, dashed, turn}], labels:[…], fixes:[…], start, warnings } */
+/* ==== findRunway ==== 滑走路を名前で。AIP の L/R つきしか無いとき「03」は「03L」などの最初に当たるもの */
+export function findRunway(ad, d) {
+  if (!ad?.rwy || !d) return null;
+  return ad.rwy.find((r) => r.d === d) || ad.rwy.find((r) => r.d.slice(0, 2) === String(d).slice(0, 2)) || null;
+}
+
+/* ==== localCtx ==== 手順に付いたウェイポイント（AIP から取り込んだ座標 proc.wpts）を先に引く */
+function localCtx(proc, ctx) {
+  const w = proc.wpts;
+  if (!w || !Object.keys(w).length) return ctx;
+  const own = (n) => { const k = String(n || '').toUpperCase().trim(); return w[k] ? { name: k, ...w[k] } : null; };
+  return { ...ctx, findPoint: (n) => own(n) || ctx.findPoint(n), resolvePoint: (t) => own(t) || ctx.resolvePoint(t) };
+}
+
+/* ==== buildProcedure ==== 手順 → { segments:[{pts, dashed, turn}], labels:[…], fixes:[…], start, warnings }
+ * SID は滑走路端から、それ以外（STAR・APP・TRANSITION）は開始フィックスから */
 export function buildProcedure(proc, ctx) {
   const out = { segments: [], labels: [], fixes: [], warnings: [], start: null };
   let start;
+  ctx = localCtx(proc, ctx);
   if (proc.type === 'SID') {
     const ad = ctx.findAirport(proc.ad);
-    const rwy = ad?.rwy?.find((r) => r.d === proc.rwy);
+    const rwy = findRunway(ad, proc.rwy);
     if (!ad || !rwy) { out.warnings.push('飛行場・滑走路を選んでください'); return out; }
+    if (rwy.d !== proc.rwy) out.warnings.push(`RWY${proc.rwy} は AIP の滑走路 RWY${rwy.d} として作図しています`);
     const override = proc.derText ? resolveFix(proc.derText, ctx) : null;
     const s = runwayStart(ad, rwy, override);
     start = { p: s, alt: ad.elev || 0, c: s.hdg };

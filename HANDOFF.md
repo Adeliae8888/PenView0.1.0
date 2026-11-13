@@ -1,4 +1,40 @@
-# HANDOFF 0.2.4（2026-11-13 パブリッシュ）
+# HANDOFF 0.2.5（2026-11-13 パブリッシュ）
+
+## できたこと（ユーザー決定は SPEC.md §8b）
+- **AIP の PDF の取り込み**（設定「AIP の PDF」）：空港ごとの zip のまま → 確認画面 → 取り込む。pdf.js 4.10.38 を vendor/pdfjs に同梱（Apache-2.0、SW で先読み、オフライン可）
+  - AD2：滑走路 L/R・THR・DER・標高（aipRunways に保存、proc-wire の findAirport で OpenAIP の滑走路を置き換え）。SID の滑走路端は AIP の DER。古い手順の「RWY03」は AIP の「03L」等の最初に当てて警告
+  - RNAV の SID/STAR/TRANSITION：表（IF/TF/DF/VA）→ 手順。座標は proc.wpts（手順ごと。無ければ登録済みの地点を探す）。id は aip-ICAO-種別-名前-滑走路（読み直すと上書き）
+  - ずれた文字コード（+29）・1字ずつの文字・壊れたフォントの空白（CJK 拡張 A）を直してから読む
+- **TRANSITION**：種別と parents。ルートの DEP／DST の行で選ぶ（route.procs：SID・SID_TR・STAR_TR・STAR・APP）。無関係な TRANSITION は選べず、親が変われば外れる（dropOrphans）
+- **手順の色分け**と**名前のあるウェイポイントの WPT 形式の表示**
+- 離陸前は手順を入れ直すとアクティブ STPT を 1 に
+
+## ファイル
+| ファイル | 変更 |
+|---|---|
+| js/pdf-text.js（新） | pdf.js → 位置つきの文字・行・区切り。ずれた文字コードの復元 |
+| js/aip-parse.js（新） | AD 2.12/2.13、RNAV の表・座標表・図の中の座標・上昇勾配の注記、手順への変換、TRANSITION のつなぎ |
+| js/aip-import.js（新） | zip/pdf の読み取り（scanAip）・保存（applyAip）・aipRunways |
+| js/ui-aip.js（新） | 設定の取り込み欄と確認画面 |
+| js/route-proc.js | 役割（SID・SID_TR・STAR_TR・STAR・APP）、fitsRole、dropOrphans、並び |
+| js/procgeo.js / procedures.js / ui-proc.js | TRANSITION、findRunway、localCtx（proc.wpts）、runwayStart（AIP の DER）、親の選択 |
+| js/ui-route.js / proc-render.js / proc-wire.js / map-render.js / css | DEP・DST の行の選択欄、色、WPT 形式、STPT の色 |
+| vendor/pdfjs/ | pdf.min.mjs・pdf.worker.min.mjs・LICENSE |
+
+## 検証
+- 単体 32/32（新規：ずれた文字コード・名前・高度・反対側の滑走路、AD2（ずれた末端・真方位なし）、RNAV の表（上下のコース・2段の高度・座標表・上昇勾配）、TRANSITION の選択と並び）
+- 画面：e2e・e2e-nav・e2e-proc・e2e-route-proc・e2e-gesture・e2e-aip（新規）すべてエラー 0
+- e2e-aip：8空港の zip（279 PDF）を 17 秒で読み取り、滑走路 8 飛行場・手順 260 本（SID 135・TRANSITION 34・STAR 91）を取り込み。千歳 JUGGLAR2 RWY01L を選ぶと TRANSITION は PANSY・BUTOS だけ、SOSHU2 に変えると外れる。滑走路端の推定なし
+- tests/aip-corpus.mjs（新規・PDF は同梱しない）：AD2 は全飛行場で「THR → DER の距離 ＝ LDA」が 15m 以内（独立の確かめ。羽田の Displaced THR も）。RNAV の表 235・レグ 1465 で名前・座標の抜けなし。TRANSITION の親なし 11（伊丹・千歳 SHUYU・羽田 OPPAR：親が従来型の文章の SID のため。0.2.6 で取り込めばつながる）
+- FUNCTIONS：374 → 427（新しい4ファイルなど +54／procFields を削除）。60 行超は createView のみ
+
+## 残り
+- Android タブレット実機での確認（ピンチ・回転・スワイプの感触、取り込みの速さ）
+- 0.2.6：従来型の文章の SID/STAR、0.2.7：進入チャート（PDF 取り込みの検討は下の 0.2.4 の記録）
+
+---
+
+# HANDOFF 0.2.4（2026-11-13 パブリッシュ）— 以下は前の版の記録
 
 ## できたこと（ユーザー決定は SPEC.md §2・§8）
 A. **DIVERT**：目的飛行場から 30NM 以内か MISSED APP の後にボタン（▲▼ LOG FUEL の段の右端、小さく。MISSED APP も同じ段へ移動）。進入前でもその位置から代替経路へ直行。DIV は DIVERT を押した後だけ表示（DIV＝EST − 代替飛行場の接地見込み＋予備）。復行・DIVERT 後は HOME BINGO を判定しない（点滅なし）。復行中（DIVERT 前）の燃料欄は EST と ALT（LAND は出さない）
@@ -26,8 +62,23 @@ C. **手順のパーツ「旋回して針路」（turnhdg）**：dir（L/R）・
 ## 残り
 - Android タブレット実機での確認（特にピンチ・回転・スワイプの感触。PAN_RELEASE_PX＝30、ROTATE_START_DEG＝10 は実機で調整するかも）
 
-## 0.2.5 の予定（0.2.4 を見てから決める）
-D. AIP の SID の PDF からアプリ内で手順を作る（pdf.js 同梱、文字を読む方式。補う値＝RWY HDG・滑走路端・会合針路〔既定 45°〕・旋回速度とバンク・上昇勾配〔既定 3.3%〕・名前だけのフィックスの座標。既定値は設定で変えられ、取込後の確認画面で補った箇所を黄色で示す）。書き方の違う SID の PDF を 5〜10 枚もらいたい
+## PDF 取り込みの検討（2026-11-13、8空港 279 PDF：RJAH RJCC RJFF RJOO RJSM RJTT ROAH RODN）
+- 文字の層なし（画像）24：RODN 全部、RJSM の IAC と SID の文章、AOC。→ アプリでは読めない（OCR なし）。Claude が画像を読んでデータにする
+- 文字のずれた符号：フォントによって文字コードが 29 ずれている（制御文字 0x03＝空白、0x13〜0x1C＝数字）。pdf.js の生の文字列に +29 で全部戻る（「Climb to 600FT on HDG028°,」）。pdftotext では数字が消えるので注意
+- AD2 の 2.12：8空港とも滑走路ごと（L/R 別）の THR 座標・真方位（RJSM は未公表 → 両端から計算）・THR 標高。2.13 の TORA と LDA の差で末端のずれを補正すれば DER が出る（RJTT 16L/34R/16R など）。ADC には滑走路端の座標の文字は無い
+- RNAV の SID/STAR（58）と RJTT の RNP AR（1）：ARINC 424 の表（IF/TF/DF/VA のみ）＋ウェイポイント座標表 → 全自動。滑走路方位も分かる（RJAH 03L＝028°M）
+- 従来型 SID/STAR の文章（29＋8、ずれた符号 7 を含む）：決まった言い回し（Climb RWY HDG to/until、turn right/left (HDG)、to intercept and proceed via、via R to、DME ARC、direct to、Cross … at or above/below、From over）→ 規則で読む。補う値は既定値＋確認画面
+- IAC：RNP（18）はウェイポイント座標と役割（IAF/IF/FAF/MAPt/MAHF）の一覧 → 順に並べて TF でほぼ自動。従来型（35＋ずれた符号 46）は進入経路の文章が無い（図だけ）。読めるのはフィックスの定義（TAIYO R081/D26.0 HUC 等）・FAF 座標・最終進入コース・復行の文章 → 候補を出して組み立ては半自動。待機（hold）は未対応
+- GOPVU1 の滑走路方位を RNAV の表の値（028°/208°）に直した JSON を渡した
+
+## 0.2.5 以降の分け方（提案・未決定）
+- 0.2.5 に追加（ユーザー依頼 2026-11-13）：
+  1. ルートに入れた手順（SID 等）のフィックスと線の色を変え、登録済みの WPT・経路と見分けられるように
+  2. 手順の中の名前のあるウェイポイント（GOPVU 等）は、既存の WPT と同じ形で名前を表示。D8.0 HUC のような距離・高度で決まる点は対象外（決定）
+  3. ROUTE の DEP・DST の行に手順の選択を付ける（ルート欄の下の選択欄は廃止）。種別 TRANSITION を追加し、つながる SID/STAR を持たせる。TRANSITION は選んだ SID（STAR）に属するものだけ選べる（無関係の組み合わせは選べない）。DEP＝SID→TRANSITION、DST＝STAR（＋TRANSITION）・APP（決定）
+- 0.2.5：AD2 の読込（滑走路 L/R・THR・DER・標高、2.19 の NAVAID）＋ RNAV の SID/STAR の自動取り込み＋取り込み確認画面＋ずれた符号の復元
+- 0.2.6：従来型 SID/STAR の文章の読み取り（補う値の既定値は設定で変更）
+- 0.2.7：IAC（RNP は自動、従来型は候補から組み立て。待機の描画）
 
 ---
 

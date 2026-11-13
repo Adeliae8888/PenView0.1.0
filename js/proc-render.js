@@ -38,7 +38,18 @@ function altSvg(alt, x, y) {
   return { svg: txt(v, y) + bars, lines: 1 };
 }
 
-/* ==== labelSvg ==== 注記1つ。off＝ドラッグでずらした量（px）。data-lbl でドラッグ対象を特定 */
+/* ==== isNamedFix ==== 名前のあるウェイポイント（GOPVU・H1R00 など）。D8.0 HUC・2105FT・手順名-番号 は除く */
+export function isNamedFix(name) {
+  return /^[A-Z][A-Z0-9]{1,4}$/.test(String(name || ''));
+}
+
+/* ==== wptMark ==== 名前のあるフィックスは WPT と同じ形（三角＋右上の名前）で手順の色。ルートに入れた手順は STPT のラベルに名前が出るので三角だけ */
+function wptMark(view, f, withName = true) {
+  const p = view.geoToScreen(f.lat, f.lon);
+  return `<g class="proc-wpt" transform="translate(${p.x.toFixed(1)} ${p.y.toFixed(1)})"><path d="M0-5L4.5 3H-4.5Z"/>${withName ? `<text x="6" y="-4">${esc(f.name)}</text>` : ''}</g>`;
+}
+
+/* ==== labelSvg ==== 注記1つ。off＝ドラッグでずらした量（px）。data-lbl でドラッグ対象を特定。名前のあるフィックスは名前を WPT 形式で出すので注記は高度・速度だけ */
 function labelSvg(view, proc, l) {
   const s = view.geoToScreen(l.lat, l.lon);
   const off = l.off || { dx: l.kind === 'fix' ? 10 : 0, dy: l.kind === 'fix' ? -8 : -6 };
@@ -48,7 +59,8 @@ function labelSvg(view, proc, l) {
   if (l.kind === 'course') {
     return `<text class="proc-crs" data-lbl="${esc(id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="middle">${esc(l.text)}</text>`;
   }
-  let out = l.text ? `<text class="proc-fix" data-lbl="${esc(id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}">${esc(l.text)}</text>` : '';
+  const text = isNamedFix(l.text) ? '' : l.text;
+  let out = text ? `<text class="proc-fix" data-lbl="${esc(id)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}">${esc(text)}</text>` : '';
   const a = altSvg(l.alt, x, y + LINE_PX);
   out += a.svg;
   if (l.speed) out += `<text class="proc-spd" x="${x.toFixed(1)}" y="${(y + LINE_PX * (1 + a.lines)).toFixed(1)}">MAX ${esc(l.speed)}KT</text>`;
@@ -56,14 +68,19 @@ function labelSvg(view, proc, l) {
   return leader + out;
 }
 
-/* ==== drawProcedures ==== 表示する手順をすべて描く。editingId の手順は強調、activePartId（航法中の区間）は航法色で太く */
-export function drawProcedures(view, procs, ctx, editingId, activePartId = null) {
+/* ==== drawProcedures ==== 表示する手順をすべて描く。editingId の手順は強調、activePartId（航法中の区間）は航法色で太く、onRoute（ルートで選んだ手順）は太く */
+export function drawProcedures(view, procs, ctx, editingId, activePartId = null, onRoute = new Set()) {
   return procs.map((proc) => {
     const r = built(proc, ctx);
-    const cls = `proc${proc.id === editingId ? ' editing' : ''} proc-${proc.type.toLowerCase()}`;
+    const cls = `proc${proc.id === editingId ? ' editing' : ''}${onRoute.has(proc.id) ? ' on-route' : ''} proc-${proc.type.toLowerCase()}`;
     let out = r.segments.map((sg) => `<path class="proc-line${sg.dashed ? ' missed' : ''}${sg.turn ? ' turn' : ''}${activePartId && sg.partId === activePartId ? ' active' : ''}" d="${polyline(view, sg.pts)}"/>`).join('');
-    r.fixes.forEach((f) => { const p = view.geoToScreen(f.lat, f.lon); out += `<path class="proc-fixmark" d="M${p.x.toFixed(1)} ${(p.y - 5).toFixed(1)}l4.5 8h-9Z"/>`; });
-    if (r.start) {
+    r.fixes.forEach((f) => {
+      if (isNamedFix(f.name)) { out += wptMark(view, f, !onRoute.has(proc.id)); return; }
+      const p = view.geoToScreen(f.lat, f.lon);
+      out += `<path class="proc-fixmark" d="M${p.x.toFixed(1)} ${(p.y - 5).toFixed(1)}l4.5 8h-9Z"/>`;
+    });
+    if (r.start && proc.type !== 'SID' && isNamedFix(r.start.name)) out += wptMark(view, r.start, !onRoute.has(proc.id));
+    else if (r.start) {
       const p = view.geoToScreen(r.start.lat, r.start.lon);
       out += `<circle class="proc-start${r.start.estimated ? ' est' : ''}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="proc-fix" x="${(p.x + 8).toFixed(1)}" y="${(p.y + 14).toFixed(1)}">${esc(r.start.name || '')}${r.start.estimated ? '（推定）' : ''}</text>`;
     }

@@ -5,6 +5,7 @@ import { activeRoute, newRoute, addPoint, setActiveRoute } from './route.js';
 import { addUserPoint } from './points.js';
 import { insertIndex } from './ui-route.js';
 import { renderNavDataSection, bindNavDataSection, renderIoSection, bindIoSection } from './ui-settings-data.js';
+import { renderAipSection, bindAipSection } from './ui-aip.js';
 import { saveRoutes } from './route.js';
 import { now, formatClock } from './clock.js';
 import { COORD_FORMATS, formatLatLon, formatBe, parseCoordinate } from './coords.js';
@@ -157,6 +158,7 @@ export function renderSettings() {
   document.querySelectorAll('input[name="timeZone"]').forEach((r) => { r.checked = r.value === (s.timeZone || 'Z'); });
   $('hackStatus').textContent = `${formatClock(now())}（補正 ${((s.timeOffsetMs || 0) / 1000).toFixed(0)} 秒）`;
   renderNavDataSection();
+  renderAipSection();
   renderIoSection();
   $('aboutText').textContent = `${self.APP_NAME} ${self.APP_VERSION} · 空域等 OpenAIP（CC BY-NC 4.0, openaip.net）· 陸地 Natural Earth · 偏差 国土地理院 磁気図2020.0年値`;
 }
@@ -238,6 +240,7 @@ function bindTimeSettings() {
 function bindSettingsSheet(actions) {
   bindTimeSettings();
   bindNavDataSection();
+  bindAipSection();
   bindIoSection();
   $('gpsToggle').addEventListener('click', () => { if (isGpsOn()) stopGps(); else startGps(); renderSettings(); });
   $('simToggle').addEventListener('click', () => {

@@ -89,5 +89,16 @@
 - NAVAID ラベル：ID＋TACAN チャンネル（あれば）＋VOR 周波数（あれば）。DME 単体はチャンネルのみ
 - **主な端末は Android タブレット**（PC はブリーフィング、iPad も可）
 
+## 8b. AIP の PDF の取り込みと TRANSITION（0.2.5・決定 2026-11-13）
+- 設定「AIP の PDF」に国土交通省の空港ごとの zip（または PDF）をそのまま選ぶ → 読み取った内容の確認画面 → 選んで取り込む
+- AD2（AD 2.12／2.13）：滑走路を L/R つきで、末端（THR）・離陸側の端（DER）・標高。SID の開始点は AIP の DER（推定しない）。真方位が未公表なら両端の座標から。末端がずれた滑走路は「滑走路の始まり」と「Displaced THR」の座標を使う
+- RNAV の SID/STAR/TRANSITION：ARINC 424 の表（IF/TF/DF/VA）とウェイポイントの座標（表、無ければ図の中の縦の並び）から全自動。上昇勾配の注記（RWY03L : 4.1% climb gradient）は VA に使う。取り込んだ手順は既定で地図に出さない
+- 従来型の文章の SID/STAR は 0.2.6、進入チャート（IAC）は 0.2.7。文字の無い画像の PDF（嘉手納・三沢の一部）は読めない（Claude が画像を読んでデータにする）
+- 手順の種別 TRANSITION：parents＝つながる SID または STAR（複数可）。取り込みでは SID の PDF の TRANSITION は「最初のフィックスで終わる SID」、STAR の PDF のものは「最後のフィックスから始まる STAR」に自動でつなぐ。エディターでも選べる
+- ルート：DEP の行に SID → TRANSITION、目的地（DST）の行に STAR → TRANSITION・APP を選ぶ（ルート欄の下の選択欄は廃止）。TRANSITION は選んだ SID（STAR）に属するものだけ選べ、SID を変えると合わなくなった TRANSITION は外れる。並び：DEP → SID → TR → 経路 → TR → STAR → APP → DST
+- 手順の色：SID 緑・TRANSITION ティール・STAR オレンジ・APP 黄（WPT の水色・ルートの白・航法中の紫と見分ける）。ルートに入れた手順の点（STPT）も手順の色
+- 手順の中の名前のあるウェイポイント（GOPVU・LICEN など）は WPT と同じ形（三角＋名前）で手順の色。D8.0 HUC・2105FT などは従来の注記。ルートに入れた手順は STPT のラベルに名前が出るので三角だけ
+- 離陸前に手順を入れ直したら、アクティブ STPT は最初の STPT に戻す（飛行中は航法中の点を保つ）
+
 ## 9. 以降の予定
 - 0.2.4 以降：チャート（PDF・画像）重ね、TAC（ブルズアイ・Hook・BRAA・DOL・脅威円・JOKER）、SEAD/TOT/タイムライン、記録と再生（GPX＋イベント）、ブリーフィング画面

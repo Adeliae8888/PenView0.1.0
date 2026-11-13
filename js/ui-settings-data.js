@@ -7,11 +7,12 @@ import { aircraftList, mergeAircraft } from './aircraft.js';
 import { userPoints, setPointSources, saveUserPoints } from './points.js';
 import { now } from './clock.js';
 import { procedures, mergeProcedures } from './procedures.js';
+import { aipRunwayIndex, mergeAipRunways } from './aip-import.js';
 import { esc } from './map-render.js';
 
 const $ = (id) => document.getElementById(id);
 const IO_KINDS = [
-  ['routes', 'ルート'], ['aircraft', '機体（形態を含む）'], ['navdata', 'NAV データ'], ['userPoints', 'ユーザーポイント'], ['procedures', '手順（SID/STAR/APP）'], ['settings', '設定'], ['all', '全データ'],
+  ['routes', 'ルート'], ['aircraft', '機体（形態を含む）'], ['navdata', 'NAV データ'], ['userPoints', 'ユーザーポイント'], ['procedures', '手順（SID/TRANSITION/STAR/APP）と AIP の滑走路'], ['settings', '設定'], ['all', '全データ'],
 ];
 const fmtDate = (ms) => (ms ? new Date(ms).toISOString().slice(0, 10) : '—');
 
@@ -62,7 +63,7 @@ function collect(kind) {
   if (all || kind === 'aircraft') data.aircraft = aircraftList();
   if (all || kind === 'navdata') data.navdata = exportNavData();
   if (all || kind === 'userPoints') data.userPoints = userPoints();
-  if (all || kind === 'procedures') data.procedures = procedures();
+  if (all || kind === 'procedures') { data.procedures = procedures(); data.aipRunways = aipRunwayIndex(); }
   if (all || kind === 'settings') data.settings = state.settings;
   return data;
 }
@@ -91,7 +92,13 @@ export async function applyImport(data, only = 'all') {
     saveUserPoints();
     done.push('ユーザーポイント');
   }
-  if (use('procedures')) { mergeProcedures(data.procedures); emit('proc'); done.push('手順'); }
+  if (use('procedures')) {
+    if (data.aipRunways) await mergeAipRunways(data.aipRunways);
+    mergeProcedures(data.procedures);
+    emit('proc');
+    emit('route');
+    done.push('手順');
+  }
   if (use('settings')) { updateSettings({ ...data.settings }); done.push('設定'); }
   if (!done.length) throw new Error('このファイルには選んだ項目が入っていません');
   return done;
