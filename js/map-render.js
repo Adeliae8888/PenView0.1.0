@@ -226,6 +226,7 @@ export function drawOverlay(el, view, state, variation, nav = null, extra = {}) 
     drawDirectArm(view, state.directArm, state.own),
     drawSelection(view, state.selection),
     drawOwnship(view, state.own),
+    extra.topSvg || '',
   ].join('');
 }
 
@@ -240,23 +241,27 @@ export function scaleBar(view) {
 
 /* ==== hitTest ==== タップ位置の近くの地点（STPT・ユーザー・飛行場・NAVAID）と、その点を含む空域。near[0] にスナップする */
 export function hitTest(view, state, sx, sy, geo, nav = null) {
+  return { near: nearPoints(view, state, sx, sy, nav).slice(0, 3), airspaces: airspacesAt(state, geo) };
+}
+
+/* ==== nearPoints ==== 画面の (sx,sy) から radius px 以内の地点（近い順）。ルーラーの吸い付けにも使う */
+export function nearPoints(view, state, sx, sy, nav = null, radius = 22) {
   const near = [];
   const pickGeo = (items, kind, label, extra = () => ({})) => items.forEach((it) => {
     const p = view.geoToScreen(it.lat, it.lon);
     const d = Math.hypot(p.x - sx, p.y - sy);
-    if (d < 22) near.push({ kind, d: d - 5, label: label(it), name: it.name, lat: it.lat, lon: it.lon, ...extra(it) });
+    if (d < radius) near.push({ kind, d: d - 5, label: label(it), name: it.name, lat: it.lat, lon: it.lon, ...extra(it) });
   });
   pickGeo(nav?.route?.points || [], 'stpt', (p) => `STPT ${p.name}`, (p) => ({ pointId: p.id }));
   pickGeo(nav?.userPoints || [], 'user', (u) => `${u.name}（ユーザー）`);
   const pick = (items, kind, label) => items.forEach((it) => {
     const p = view.geoToScreen(it.p[1], it.p[0]);
     const d = Math.hypot(p.x - sx, p.y - sy);
-    if (d < 22) near.push({ kind, d, label: label(it), name: kind === 'apt' ? (it.icao || it.n) : it.ident, lat: it.p[1], lon: it.p[0], elev: it.elev, dec: it.dec });
+    if (d < radius) near.push({ kind, d, label: label(it), name: kind === 'apt' ? (it.icao || it.n) : it.ident, lat: it.p[1], lon: it.p[0], elev: it.elev, dec: it.dec });
   });
   if (state.settings.layers.airports) pick(state.data.airports, 'apt', (a) => `${a.icao ? `${a.icao} ` : ''}${a.n}（標高 ${a.elev}ft）`);
   if (state.settings.layers.navaids) pick(state.data.navaids, 'nav', (n) => `${navaidLabel(n.ident, n.t, n.f, n.ch)}（${n.n}）`);
-  near.sort((x, y) => x.d - y.d);
-  return { near: near.slice(0, 3), airspaces: airspacesAt(state, geo) };
+  return near.sort((x, y) => x.d - y.d);
 }
 
 function airspacesAt(state, geo) {

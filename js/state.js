@@ -16,7 +16,8 @@ const DEFAULT_SETTINGS = {
   bullseye: { lat: 36.3474, lon: 141.3743, name: 'BULL' },
   follow: true,                      // ◎ ON＝自機を中央に固定
   orient: 'track',                   // 地図の向き：track＝Track-up（◎ を押したとき）、north＝North-up（方位アイコン）、free＝回転・スワイプで決めた向きのまま
-  aipDefaults: { grad: 3.3, kias: 250, bank: 25 },   // AIP の文章で書かれていない値を補う既定値（上昇勾配 %・旋回の速度 KIAS・バンク °）
+  aipDefaults: { grad: 3.3, kias: 250, bank: 25 },
+  rulerSnapPx: 24,                   // ルーラーの端点が点（NAVAID・WPT・STPT 等）に吸い付く範囲（画面 px、0＝吸い付かない）   // AIP の文章で書かれていない値を補う既定値（上昇勾配 %・旋回の速度 KIAS・バンク °）
   view: { lat: 36.3, lon: 139.5, scale: 0.6 },   // scale = px/km
   layers: { land: true, airspace: true, airports: true, navaids: true, obstacles: true, grid: false, procedures: true },
   airspaceClasses: Object.fromEntries(Object.keys(AIRSPACE_CLASSES).map((k) => [k, !['other', 'info', 'heli', 'glider'].includes(k)])),

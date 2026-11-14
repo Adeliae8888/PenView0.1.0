@@ -743,3 +743,81 @@ test('ラジアルの向き「自動」：今の距離より近い DME へは局
   near(distanceNm(from, near19), 2.9, 0.02, '局へ向かって 2.9nm');
   near(distanceNm(from, far30), 8.1, 0.02, '外向きに 8.1nm');
 });
+
+test('ルーラー：磁方位・逆方位・距離の表記（0.2.7）', async () => {
+  const { rulerMeasure, formatRuler, toggleRuler, rulerTap, rulerPoints, rulerOn } = await import('../js/ruler.js');
+  const a = { lat: 36, lon: 140 };
+  const b = destination(a, 45 + -8, 32.4);                    // 磁方位 045（偏差 8°W）に 32.4nm
+  const m = rulerMeasure(a, b, -8);
+  assert.equal(formatRuler(m), '045° / 225°  32.4nm');
+  assert.equal(formatRuler({ brg: 350.2, rec: 170.2, nm: 123.6 }), '350° / 170°  124nm');
+  assert.equal(toggleRuler(), true);
+  assert.equal(rulerTap(a), true);
+  assert.equal(rulerTap(b), true);
+  assert.equal(rulerTap(a), false, '2点そろった後のタップはルーラーが受けない');
+  assert.deepEqual(rulerPoints(), { a, b });
+  assert.equal(toggleRuler(), false);
+  assert.equal(rulerOn(), false);
+  assert.deepEqual(rulerPoints(), { a: null, b: null });
+});
+
+test('待機（ホールド）：入航コースでフィックスに入るレーストラック、点は増えない（0.2.7）', async () => {
+  const { buildProcedure } = await import('../js/procgeo.js');
+  const F = { lat: 36.4361, lon: 140.3808 };   // NAKAH 付近
+  const ctx = { findPoint: () => null, resolvePoint: (t) => (t === 'NAKAH' ? { name: 'NAKAH', ...F } : null), findAirport: () => null };
+  const proc = { id: 'h', type: 'APP', ad: 'RJAH', startFix: 'NAKAH', parts: [], missed: [
+    { id: 'm1', type: 'hold', inbound: 270, dir: 'R', min: 1, kias: 230, alt: { type: 'at', v: 4000 } }] };
+  const r = buildProcedure(proc, ctx);
+  assert.deepEqual(r.warnings, []);
+  assert.equal(r.fixes.length, 0, '待機は STPT を増やさない');
+  const sg = r.segments[0];
+  assert.ok(sg.hold && sg.dashed);
+  const pts = sg.pts;
+  near(distanceNm(pts[0], F), 0, 1e-6, '始まりはフィックス');
+  near(distanceNm(pts.at(-1), F), 0, 1e-6, '終わりもフィックス（入航）');
+  const P = pts.at(-2);                                          // 入航の始まり
+  const inboundTrue = bearingTrue(P, F);
+  near(((toMagnetic(inboundTrue, gsiVariation(F.lat, F.lon)) - 270 + 540) % 360) - 180, 0, 0.5, '入航コース 270°M');
+  // 右旋回：出航側は入航の右（北側）。半径は 230KIAS・4000ft・25°
+  const far = pts[61];
+  assert.ok(far.lat > F.lat, '右旋回なら 270° 入航の北側に出る');
+  const tas = 230 * (1 + 0.02 * 4);                              // 目安
+  near(distanceNm(F, far), 2 * (tas ** 2) / (68625 * Math.tan(25 * Math.PI / 180)), 0.4, '出航側までの幅＝直径');
+  assert.match(r.labels[0].text, /^HOLD 270° R 1MIN 4000$/);
+});
+
+test('進入チャート：名前・復行の文章・延長線上の点（0.2.7）', async () => {
+  const { iacTitle, readMissed } = await import('../js/aip-iac.js');
+  const { buildProcedure } = await import('../js/procgeo.js');
+  assert.deepEqual(iacTitle('RJAH__IAC (RNP RWY21R)_20260514.pdf'), { name: 'RNP RWY21R', rwy: '21R', rnav: true });
+  assert.deepEqual(iacTitle('RJCC__IAC (VOR A)＊_20260611.pdf'), { name: 'VOR A', rwy: '', rnav: false });
+  const sum = (t) => readMissed(t, { id: 'm' }).parts.map((p) => (p.type === 'tf' ? `${p.to}${p.alt ? `${p.alt.type}${p.alt.v}` : ''}` : p.type === 'heading' ? `HDG${p.hdg}/${p.end.alt ?? `${p.end.station}${p.end.dist}`}` : p.type === 'turnhdg' ? `${p.dir}${p.hdg}>${p.end.to}` : p.type)).join(' ');
+  assert.equal(sum('Climb to 5000FT, to O2L50, to O2L51, to O2L52, to IZUMI and hold.'), 'O2L50 O2L51 O2L52 IZUMI');
+  assert.equal(sum('Turn left direct to H6L51, to GELMA at or below 1200FT, to LAVON, to OLVAL and hold at 2000FT.'), 'H6L51 GELMAbelow1200 LAVON OLVAL');
+  assert.equal(sum('Direct to H8L51 at or below 1200FT, to H8L52, to OLVAL and hold at 2000FT.'), 'H8L51below1200 H8L52 OLVAL');
+  assert.equal(sum('Climb to 600FT on HDG028°, turn left, climb to 4000FT via HUC R002 to NAKAH and hold.'), 'HDG28/600 NAKAH');
+  assert.equal(sum('Turn right, climb on HDG 047° to intercept and proceed via HUC R002 to NAKAH and hold at 4000FT.'), 'R47>HUC R-002 NAKAH');
+  assert.equal(sum('Climb on HDG 337° to TTE 3.0DME, turn right HDG 060° to intercept and proceed via TTE R015 to KASGA and hold at 4000FT.'), 'HDG337/TTE3 R60>TTE R-015 KASGA');
+  assert.equal(sum('Turn left, climb via MKE R328 to 4000FT, proceed to MKE VOR/DME and hold.'), 'radial MKE');
+  const h = readMissed('Direct to C1L50, turn right direct to MKE and hold at 4000FT.', { id: 'm' });
+  assert.deepEqual(h.hold, { alt: 4000 });
+  assert.deepEqual(h.warn, []);
+  // 「RW21R D5.0」＝末端から延長線上に 5nm 手前、「RW21R」＝末端
+  const thr = { lat: 36.1932, lon: 140.4185 };
+  const ad = { icao: 'RJAH', p: [140.41, 36.18], rwy: [{ d: '21R', hdg: 199.8, thr }] };
+  const ctx = { findPoint: () => null, resolvePoint: () => null, findAirport: () => ad };
+  const r = buildProcedure({ id: 'a', type: 'APP', ad: 'RJAH', startFix: 'RW21R D5.0', parts: [{ id: 'p', type: 'tf', to: 'RW21R' }], missed: [] }, ctx);
+  assert.deepEqual(r.warnings, []);
+  near(distanceNm(r.start, thr), 5, 0.001, 'FAF は末端から 5nm');
+  near(bearingTrue(r.start, thr), 199.8, 0.1, '延長線上（滑走路の向きで末端へ）');
+  assert.equal(r.fixes[0].name, 'RW21R');
+});
+
+test('チャートから読み込んだ手順は確認するまで未確認（0.2.7）', async () => {
+  const { isUnverified } = await import('../js/procedures.js');
+  assert.equal(isUnverified({ id: 'aip-RJAH-APP-RNP-RWY21R', verified: false }), true, '取り込んだ直後');
+  assert.equal(isUnverified({ id: 'aip-RJAH-SID-GOPVU1-03L' }), true, '0.2.6 以前に取り込んだもの（印なし）も未確認');
+  assert.equal(isUnverified({ id: 'aip-RJAH-SID-GOPVU1-03L', verified: true }), false, '確認した');
+  assert.equal(isUnverified({ id: 'pr-abc' }), false, '自分で作った手順');
+  assert.equal(isUnverified({ id: 'pr-abc', verified: false }), true, '未確認の手順のコピー');
+});

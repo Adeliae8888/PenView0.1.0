@@ -371,3 +371,19 @@ ul.warn { margin: 6px 0; padding-left: 18px; }
 /* 0.2.6 ラジアルの点線（局 → 終点の DME。経路ではない見た目の補助） */
 #overlay .proc-guide { fill: none; stroke: var(--pc); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.8; }
 label.chk { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+/* 0.2.7 カーソル座標の上の B/E の行 */
+.cursor-readout .cr-be { color: #7dd3fc; text-align: right; }
+/* ルーラー（0.2.7） */
+.map-ctrl #rulerBtn svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+#overlay .ruler-line { stroke: #f472b6; stroke-width: 2.5; fill: none; }
+#overlay .ruler-line.preview { stroke-dasharray: 6 5; }
+#overlay .ruler-end circle { fill: rgba(244, 114, 182, .18); stroke: #f472b6; stroke-width: 2; }
+#overlay .ruler-end circle.dot { fill: #f472b6; stroke: none; }
+#overlay .ruler-end.drag circle { stroke-width: 3; fill: rgba(244, 114, 182, .35); }
+#overlay .ruler-lbl rect { fill: rgba(8, 12, 20, .85); stroke: #f472b6; stroke-width: 1; }
+#overlay .ruler-lbl text { fill: #fce7f3; stroke: none; font: 600 13px ui-monospace, Menlo, Consolas, monospace; }
+/* チャートから読み込んで未確認の手順（0.2.7） */
+.tag.unverified { font-size: 10px; border: 1px solid #ea580c; border-radius: 4px; padding: 0 4px; background: #7c2d12; color: #fed7aa; }
+.verify-bar { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 8px 10px; margin: 6px 0; border: 1px solid #ea580c; border-radius: 8px; background: rgba(124, 45, 18, .35); color: #fed7aa; }
+#overlay .proc-unv rect { fill: #7c2d12; stroke: #ea580c; stroke-width: 1; }
+#overlay .proc-unv text { fill: #fed7aa; stroke: none; font-size: 10px; font-weight: 700; }

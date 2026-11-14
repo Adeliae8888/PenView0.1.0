@@ -1,11 +1,11 @@
 /* ==== ui-proc.js ==== SID/STAR/APP エディター（手順タブ）：一覧 → 編集。パーツを追加してつなぐ（パズル型）
  * 入力のたびに地図のプレビューが更新される。フィックスは文字で入れるか、地図の長押し →「エディターへ」 */
 import { state, emit } from './state.js';
-import { procedures, findProcedure, newProcedure, removeProcedure, duplicateProcedure, saveProcedures, newPart, PROC_TYPES, PART_TYPES, procLabel } from './procedures.js';
+import { procedures, findProcedure, newProcedure, removeProcedure, duplicateProcedure, saveProcedures, newPart, PROC_TYPES, PART_TYPES, procLabel, isUnverified, markVerified } from './procedures.js';
 import { searchPoints } from './points.js';
 import { built } from './proc-render.js';
 import { esc } from './map-render.js';
-import { DEFAULT_GRADIENT_PCT, DEFAULT_BANK_DEG, DEFAULT_TURN_KIAS, turnRadiusNm } from './procgeo.js';
+import { DEFAULT_GRADIENT_PCT, DEFAULT_BANK_DEG, DEFAULT_TURN_KIAS, turnRadiusNm, DEFAULT_HOLD_KIAS } from './procgeo.js';
 
 const ALT_TYPES = { '': '高度制限なし', at: '指定（上下線）', above: '以上（下線）', below: '以下（上線）', between: '範囲' };
 const val = (v) => (v === null || v === undefined || Number.isNaN(v) ? '' : v);
@@ -37,6 +37,11 @@ function partFields(pt, base) {
     return fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.dme`, 'DME', pt.dme)
       + sel(`${base}.dir`, '向き', pt.dir, { R: 'CW（右回り）', L: 'CCW（左回り）' })
       + sel(`${base}.endBy`, '終点', pt.endBy || 'own', { own: '中心の局のラジアル', other: '別の NAVAID のラジアル', fix: 'フィックス' }) + end;
+  }
+  if (pt.type === 'hold') {
+    return fld(`${base}.inbound`, '入航コース °M', pt.inbound) + sel(`${base}.dir`, '旋回', pt.dir || 'R', { R: '右旋回', L: '左旋回' })
+      + fld(`${base}.min`, '出航 分', pt.min, { ph: '1' }) + fld(`${base}.legNm`, 'または nm', pt.legNm) + fld(`${base}.kias`, 'KIAS', pt.kias, { ph: String(DEFAULT_HOLD_KIAS) })
+      + '<span class="muted">直前の終点で待機（点は増えない）</span>';
   }
   let head = fld(`${base}.hdg`, '針路 °M', pt.hdg, pt.rwyHdg ? { ph: 'RWY HDG' } : {});
   if (pt.type === 'radial') {
@@ -77,7 +82,7 @@ function partCard(pt, i, list, n) {
       <button type="button" class="btn sm" data-pa="lbl" data-list="${list}" data-i="${i}" title="注記の位置を戻す">注記↺</button>
       <button type="button" class="btn sm danger" data-pa="del" data-list="${list}" data-i="${i}">×</button></div>
     <div class="row wrap">${partFields(pt, base)}</div>
-    <div class="row wrap">${(i > 0 || pt.type === 'turnhdg') && pt.type !== 'arc' ? turnFields(pt, base) : ''}${fld(`${base}.name`, '終点の名前', pt.name, { type: 'text', ph: '自動' })}</div>
+    <div class="row wrap">${(i > 0 || pt.type === 'turnhdg') && pt.type !== 'arc' && pt.type !== 'hold' ? turnFields(pt, base) : ''}${pt.type === 'hold' ? '' : fld(`${base}.name`, '終点の名前', pt.name, { type: 'text', ph: '自動' })}</div>
     <div class="row wrap">${sel(`${base}.alt.type`, '高度制限', a.type || '', ALT_TYPES)}${a.type ? fld(`${base}.alt.v`, a.type === 'between' ? '上限' : 'ft', a.v) : ''}${a.type === 'between' ? fld(`${base}.alt.v2`, '下限', a.v2) : ''}${fld(`${base}.speed`, '速度制限 KT', pt.speed)}</div></div>`;
 }
 
@@ -96,6 +101,20 @@ function headerFields(p) {
     <label><input type="checkbox" data-pp="visible" ${p.visible !== false ? 'checked' : ''}/> 表示</label></div><div class="row wrap">${start}</div>`;
 }
 
+/* ==== verifyHtml ==== チャートから読み込んだ手順は、使用者が確かめて「確認した」を押すまで未確認（一覧・ルートの選択・地図にも出す） */
+function verifyHtml(p) {
+  if (!isUnverified(p)) return p.verifiedAt ? `<p class="muted small">確認済み（${new Date(p.verifiedAt).toLocaleDateString()}）</p>` : '';
+  return `<div class="verify-bar"><span><b>未確認</b>：チャートから読み込んだ手順です。経路・高度・待機をチャートと見比べてから押してください</span>
+    <button type="button" class="btn primary" data-pr="verify">確認した</button></div>`;
+}
+
+/* ==== hintsHtml ==== 進入チャート（従来型）の図から読んだ定義：IAF からの経路を足すときの手がかり */
+function hintsHtml(p) {
+  if (!p.hints?.length && !Object.keys(p.fixDefs || {}).length) return '';
+  const defs = Object.entries(p.fixDefs || {}).map(([k, v]) => `${k} ＝ ${v}`);
+  return `<details class="hints" open><summary>チャートの図から読んだ定義（候補）</summary><ul class="muted small">${[...defs, ...(p.hints || [])].map((h) => `<li>${esc(h)}</li>`).join('')}</ul></details>`;
+}
+
 /* ==== parentFields ==== TRANSITION がつながる SID・STAR（同じ飛行場）。複数選べる */
 function parentFields(p) {
   const cands = procedures().filter((q) => q.ad === p.ad && (q.type === 'SID' || q.type === 'STAR'));
@@ -110,11 +129,11 @@ export function renderProcTab(el) {
   if (!p) { el.innerHTML = listHtml(); return; }
   const r = procCtx ? built(p, procCtx) : { warnings: [] };
   el.innerHTML = `<div class="row"><button type="button" class="btn" data-pr="back">← 一覧</button><b class="grow">${esc(procLabel(p))}</b>
-      <button type="button" class="btn" data-pr="dup">複製</button></div>${headerFields(p)}
-    ${r.warnings.length ? `<ul class="warn">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+      <button type="button" class="btn" data-pr="dup">複製</button></div>${verifyHtml(p)}${headerFields(p)}
+    ${r.warnings.length ? `<ul class="warn">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}${hintsHtml(p)}
     <h3>パーツ（つなぐ順）</h3>${p.parts.map((pt, i) => partCard(pt, i, 'parts', p.parts.length)).join('')}${palette('parts')}
     ${p.type === 'APP' ? `<h3>進入復行（破線）</h3>${p.missed.map((pt, i) => partCard(pt, i, 'missed', p.missed.length)).join('')}${palette('missed')}` : ''}
-    <p class="muted">フィックスは「MENOU」「HUC R-270 D15」「HUC R-300 / GOT R-210」「HUC R-270 / GOT D15」や座標で。地図を長押し →「エディターへ」でも入ります。地図の注記はドラッグで動かせます。</p>
+    <p class="muted">フィックスは「MENOU」「HUC R-270 D15」「HUC R-300 / GOT R-210」「HUC R-270 / GOT D15」「RW21R（滑走路末端）」「RW21R D5.1（末端の手前 5.1nm）」や座標で。地図を長押し →「エディターへ」でも入ります。地図の注記はドラッグで動かせます。</p>
     <datalist id="procSuggest"></datalist>`;
 }
 
@@ -133,7 +152,7 @@ function listHtml() {
   const filter = `<label>飛行場<select data-pfilter><option value="">全部（${procedures().length}）</option>${ads.map((a) => `<option value="${esc(a)}" ${a === listAd ? 'selected' : ''}>${esc(a)}（${procedures().filter((p) => p.ad === a).length}）</option>`).join('')}</select></label>`;
   const toggle = list.length ? `<button type="button" class="btn" data-pr="visall">${anyOn ? '全部を非表示' : '全部を表示'}</button>` : '';
   const rows = list.map((p) => `<tr><td><input type="checkbox" data-pvis="${p.id}" ${p.visible !== false ? 'checked' : ''}/></td>
-    <td class="pick" data-pr="edit" data-id="${p.id}"><b>${esc(procLabel(p))}</b></td><td><button type="button" class="btn sm danger" data-pr="del" data-id="${p.id}">×</button></td></tr>`).join('');
+    <td class="pick" data-pr="edit" data-id="${p.id}"><b>${esc(procLabel(p))}</b>${isUnverified(p) ? ' <span class="tag unverified">未確認</span>' : ''}</td><td><button type="button" class="btn sm danger" data-pr="del" data-id="${p.id}">×</button></td></tr>`).join('');
   return `<div class="row wrap"><button type="button" class="btn primary" data-pr="new">新規の手順</button>${filter}${toggle}</div>
     <table class="pts">${rows || '<tr><td class="muted">まだありません</td></tr>'}</table><p class="muted">手順は NAV モードで表示。書き出し・読込は設定から。</p>`;
 }
@@ -209,6 +228,7 @@ function handleClick(b) {
   const p = findProcedure(editingId);
   if (!p) return;
   if (act === 'dup') editingId = duplicateProcedure(p).id;
+  if (act === 'verify') markVerified(p);
   if (b.dataset.addPart) p[b.dataset.list].push(newPart(b.dataset.addPart));
   const arr = b.dataset.list && p[b.dataset.list];
   const i = Number(b.dataset.i);

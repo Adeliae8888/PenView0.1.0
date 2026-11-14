@@ -94,7 +94,7 @@ function crossRule(where, kind, a, b) {
 }
 
 /* ==== Scanner ==== 文の頭から言い回しを1つずつ読む */
-class Scanner {
+export class Scanner {
   constructor(text, opts) {
     // 普通の英単語（Climb・Cross・From）は小文字に。大文字だけの語（フィックス・局・RWY・HDG・DME）はそのまま
     this.s = text.replace(/\b([A-Z][a-z]+)\b/g, (w) => w.toLowerCase()).replace(/\bproceed v via\b/g, 'proceed via');

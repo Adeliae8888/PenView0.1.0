@@ -3,7 +3,7 @@ import { state, on, emit, loadSettings, currentVariation, updateSettings, SETTIN
 import { setStoreErrorHandler, requestPersistence, saveLater } from './store.js';
 import { createProjection } from './projection.js';
 import { createView, attachGestures } from './map-view.js';
-import { buildGeoLayer, applyGeoVisibility, drawOverlay, scaleBar, hitTest } from './map-render.js';
+import { buildGeoLayer, applyGeoVisibility, drawOverlay, scaleBar, hitTest, nearPoints } from './map-render.js';
 import { bindUi, renderDataPanel, renderTopBar, renderInfo, renderSettings, renderCursor, renderPickList, showBanner } from './ui.js';
 import { setManualOwn } from './gps.js';
 import { loadAircraft } from './aircraft.js';
@@ -11,7 +11,7 @@ import { loadRoutes, activeRoute } from './route.js';
 import { loadUserPoints, setPointSources } from './points.js';
 import { navContext, onOwnUpdate, validityWindow } from './nav.js';
 import { loadNavData, navIndex, airacExpired, navItems as navItemsOf } from './navdata.js';
-import { buildNavGeo, drawNavOverlay, navHits, navCatalogPoints, officialHides } from './nav-render.js';
+import { buildNavGeo, drawNavOverlay, navHits, navNearPoints, navCatalogPoints, officialHides } from './nav-render.js';
 import { now } from './clock.js';
 import { bindNavUi, renderNavOverlays } from './ui-nav.js';
 import { renderRouteTab, bindRouteTab, renderLogTab } from './ui-route.js';
@@ -21,6 +21,7 @@ import { loadProcedures } from './procedures.js';
 import { loadAipRunways } from './aip-import.js';
 import { procSvg, bindLabelDrag, bumpProcContext, syncProcRoutes } from './proc-wire.js';
 import { initAndroid } from './android.js';
+import { rulerOn, toggleRuler, rulerTap, rulerGrab, rulerDrag, rulerDrop, rulerSvg } from './ruler.js';
 
 const $ = (id) => document.getElementById(id);
 const DATA_FILES = ['land', 'airspace', 'airports', 'navaids', 'obstacles'];
@@ -58,7 +59,7 @@ function requestDraw() {
     // 広域ではルート線（TACAN 以外）を隠す
     $('map').classList.toggle('zoom-wide', view.scale < WIDE_SCALE);
     const hides = officialHides(state.settings);
-    drawOverlay($('overlay'), view, state, currentVariation().value, navContext(), { navSvg: drawNavOverlay(view, state, win) + procSvg(view), hideObstacles: hides.obstacles });
+    drawOverlay($('overlay'), view, state, currentVariation().value, navContext(), { navSvg: drawNavOverlay(view, state, win) + procSvg(view), hideObstacles: hides.obstacles, topSvg: rulerSvg(view, currentVariation().value, state.cursor) });
     const bar = scaleBar(view);
     $('scaleBar').style.width = `${bar.px}px`;
     $('scaleLabel').textContent = `${bar.nm} nm`;
@@ -158,6 +159,26 @@ function selectHit(hit, geo) {
   requestDraw();
 }
 
+/* ==== snapAt ==== ルーラーの端点：画面の (sx,sy) から設定の範囲（rulerSnapPx）内で一番近い点に吸い付く。無ければその位置 */
+function snapAt(sx, sy) {
+  const radius = Number(state.settings.rulerSnapPx) || 0;
+  const geo = view.screenToGeo(sx, sy);
+  if (radius <= 0) return geo;
+  const near = [...nearPoints(view, state, sx, sy, navContext(), radius), ...navNearPoints(view, state, sx, sy, win, radius)];
+  near.sort((a, b) => a.d - b.d);
+  return near[0] ? { lat: near[0].lat, lon: near[0].lon, name: near[0].name } : geo;
+}
+
+/* ==== rulerHandlers ==== 地図操作のうちルーラーが受け持つ分（端点を置く・つかむ・動かす） */
+function rulerHandlers() {
+  return {
+    onAnyTap: (sx, sy) => { if (!rulerTap(snapAt(sx, sy))) return false; requestDraw(); return true; },
+    grab: (sx, sy) => { if (!rulerGrab(view, sx, sy)) return false; requestDraw(); return true; },
+    dragTo: (sx, sy) => { rulerDrag(snapAt(sx, sy)); requestDraw(); },
+    drop: () => { rulerDrop(); requestDraw(); },
+  };
+}
+
 /* ==== handleTap ==== 地点カーソル＋オプション（PC はクリック、タッチは長押し）。近くに複数あればリストで選ぶ */
 function handleTap(sx, sy) {
   const geo = view.screenToGeo(sx, sy);
@@ -186,9 +207,11 @@ function wireEvents() {
     // 2本指の回転：向きは手動に（◎ の中央固定は保つ）
     onUserRotate: () => { gestureActive = true; if (state.settings.orient !== 'free') updateSettings({ orient: 'free' }); },
     onGestureEnd: () => { if (gestureActive) { gestureActive = false; applyOrientation(); } },
-    onPoint: (sx, sy) => { state.cursor = view.screenToGeo(sx, sy); renderCursor(); },
+    onPoint: (sx, sy) => { state.cursor = view.screenToGeo(sx, sy); renderCursor(); if (rulerOn()) requestDraw(); },
     zoomAnchor: followAnchor,
+    ...rulerHandlers(),
   });
+  $('rulerBtn').addEventListener('click', () => { $('rulerBtn').classList.toggle('active', toggleRuler()); requestDraw(); });
   on('own', (own) => { onOwnUpdate(own); applyOrientation(); renderDataPanel(); requestDraw(); });
   on('route', () => { bumpProcContext(); syncProcRoutes(); renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
   on('navdata', () => { refreshCatalog(); refreshNavGeo(true); if (syncProcRoutes()) emit('route'); requestDraw(); });

@@ -187,26 +187,37 @@ export function drawNavOverlay(view, state, win) {
 /* ==== navHits ==== タップ位置の近くの点（WPT・VFR・公式 NAVAID 等）と、その点を含む区域・近くのルート線 */
 export function navHits(view, state, sx, sy, geo, win) {
   const s = state.settings;
-  const near = [];
-  const known = new Set([...state.data.navaids.map((n) => n.ident), ...state.data.airports.map((a) => a.icao)]);
   const areas = [];
   navIndex().forEach(({ group }) => {
     if (!groupOn(s, group)) return;
     navItems(group).forEach((it) => {
       if (!isValidIn(it, win)) return;
-      if (it.k === 'point') {
-        if ((group === 'aip-navaid' || group === 'aip-arp') && known.has(it.n)) return;   // OpenAIP と同じ地点は二重に出さない
-        const p = screenOf(view, it);
-        const d = Math.hypot(p.x - sx, p.y - sy);
-        if (d < 22) near.push({ kind: group, d, name: it.n, label: `${it.n}（${GROUPS[group]?.label || group}）`, lat: it.p[1], lon: it.p[0] });
-      } else if (it.k === 'area' && pointInRing(geo.lon, geo.lat, it.g)) {
+      if (it.k === 'area' && pointInRing(geo.lon, geo.lat, it.g)) {
         areas.push(`${GROUPS[group]?.label}：${it.n} ${limitText(it)}${it.a.NOTAM ? ` ${it.a.NOTAM}` : ''}`);
       } else if (it.k === 'line' && nearLine(view, it.g, sx, sy)) {
         areas.push(`${it.n}${it.a.MEA ? ` MEA ${it.a.MEA}` : ''}${it.a.MAG_TR ? ` ${it.a.MAG_TR}°M` : ''}${it.a.DIST ? ` ${it.a.DIST}nm` : ''}`);
       }
     });
   });
-  return { near, areas: areas.slice(0, 12) };
+  return { near: navNearPoints(view, state, sx, sy, win), areas: areas.slice(0, 12) };
+}
+
+/* ==== navNearPoints ==== 画面の (sx,sy) から radius px 以内の NAV データの点（表示中のグループのみ）。ルーラーの吸い付けにも使う */
+export function navNearPoints(view, state, sx, sy, win, radius = 22) {
+  const s = state.settings;
+  const near = [];
+  const known = new Set([...state.data.navaids.map((n) => n.ident), ...state.data.airports.map((a) => a.icao)]);
+  navIndex().forEach(({ group }) => {
+    if (!groupOn(s, group)) return;
+    navItems(group).forEach((it) => {
+      if (it.k !== 'point' || !isValidIn(it, win)) return;
+      if ((group === 'aip-navaid' || group === 'aip-arp') && known.has(it.n)) return;   // OpenAIP と同じ地点は二重に出さない
+      const p = screenOf(view, it);
+      const d = Math.hypot(p.x - sx, p.y - sy);
+      if (d < radius) near.push({ kind: group, d, name: it.n, label: `${it.n}（${GROUPS[group]?.label || group}）`, lat: it.p[1], lon: it.p[0] });
+    });
+  });
+  return near;
 }
 
 function nearLine(view, g, sx, sy) {

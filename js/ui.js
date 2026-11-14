@@ -79,12 +79,16 @@ export function renderTopBar() {
   renderCursor();
 }
 
-/* ==== renderCursor ==== カーソル（マウス位置／最後のシングルタッチ）の座標を選択中の座標系で */
+/* ==== renderCursor ==== カーソル（マウス位置／最後のシングルタッチ）の座標：上の行に B/E（ブルズアイからの磁方位/距離）、下の行に選択中の座標系
+ * 座標系が B/E のときは1行。NAV・TAC 共通 */
 export function renderCursor() {
   const el = $('cursorReadout');
   const c = state.cursor;
   el.classList.toggle('hidden', !c);
-  if (c) el.textContent = `⌖ ${formatLatLon(c.lat, c.lon, state.settings.coordFormat)}`;
+  if (!c) return;
+  const s = state.settings;
+  const be = `<div class="cr-be">${esc(s.bullseye.name || 'B/E')} ${esc(formatBe(c, s.bullseye, currentVariation().value))}</div>`;
+  el.innerHTML = s.coordFormat === 'B/E' ? be : `${be}<div>⌖ ${esc(formatLatLon(c.lat, c.lon, s.coordFormat))}</div>`;
 }
 
 /* ==== renderInfo ==== タップした地点の情報（全座標形式・B/E・自機からの方位距離・空域） */
@@ -149,6 +153,7 @@ export function renderSettings() {
   $('bullInput').placeholder = formatLatLon(s.bullseye.lat, s.bullseye.lon, s.coordFormat);
   document.querySelectorAll('input[name="varMode"]').forEach((r) => { r.checked = r.value === s.varMode; });
   $('manualVar').value = s.manualVar;
+  $('rulerSnap').value = s.rulerSnapPx;
   $('manualVar').disabled = s.varMode !== 'manual';
   const cv = currentVariation();
   $('varStatus').textContent = `使用中 ${formatVariation(cv.value)}（${{ gsi: '国土地理院 近似式・自機位置', manual: '手動', 'manual-fallback': '近似式の範囲外のため手動値' }[cv.source]}）`;
@@ -263,6 +268,7 @@ function bindSettingsSheet(actions) {
     $('bullStatus').textContent = `設定しました：${formatLatLon(p.lat, p.lon, state.settings.coordFormat)}`;
   });
   document.querySelectorAll('input[name="varMode"]').forEach((r) => r.addEventListener('change', () => { updateSettings({ varMode: r.value }); renderSettings(); }));
+  $('rulerSnap').addEventListener('change', () => { updateSettings({ rulerSnapPx: Math.max(0, Math.min(80, Number($('rulerSnap').value) || 0)) }); renderSettings(); });
   $('manualVar').addEventListener('change', () => { updateSettings({ manualVar: Number($('manualVar').value) || 0 }); renderSettings(); });
   $('gotoBtn').addEventListener('click', () => {
     const p = parseCoordinate($('gotoInput').value, coordCtx());

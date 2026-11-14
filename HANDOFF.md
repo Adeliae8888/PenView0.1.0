@@ -1,3 +1,37 @@
+# HANDOFF 0.2.7（2026-11-14 パブリッシュ）
+
+## できたこと（ユーザー決定は SPEC.md §2・§8d）
+1. **B/E 行**：右下のカーソル座標の上に「BULL 174/15」（ui.js renderCursor、.cr-be）。座標系が B/E のときは1行
+2. **ルーラー**（js/ruler.js 新規）：右の列の定規ボタン（#rulerBtn）→ 2回タップで線と「084° / 264°  150nm」。端点ドラッグ・吸い付き（設定 rulerSnapPx、既定 24px）。1点目の後はカーソルまで点線。もう一度押すと消える
+   - 地図の操作（map-view.js）：attachGestures を gestureDown／gestureMove／gestureEnd に分け、onAnyTap（タッチ・マウス共通の短いタップ。true でその操作を終える）と grab／dragTo／drop（端点をつかむと地図を動かさない。2本目の指が触れたらつかみをやめてピンチ）を追加
+   - 吸い付け：nearPoints（map-render.js、hitTest から分けた）＋ navNearPoints（nav-render.js、navHits から分けた）に半径を渡す
+3. **進入チャート（IAC）の取り込み**（js/aip-iac.js 新規、aip-import.js の scanAip から）
+   - iacFixes：座標の一覧（名前の右に緯度・下に経度と役割、「SEIFA(IAF) 緯度/経度」、「FAF : …」）。座標は同じ取り込みの他の手順にも使う
+   - RNP：rnpPath（IF → FAF → MAPt、線の上の途中のフィックス）→ IAF ごとに1本（rnpProcs）
+   - 従来型：profileFixes（断面図の名前・役割と「NM to THR」を x で対応）→ IF・FAF を「RW21R D10.6」で延長線上に。fixHints（図の中の R/D 定義）→ hints と fixDefs（エディターに「チャートの図から読んだ定義」）
+   - 復行：missedText（見出しの下の左揃えの行）→ readMissed（MissedScanner＝aip-text の Scanner を継承）
+   - 待機：holdCourses（フィックスの名前に一番近い方位の組 → 入航・旋回方向）→ holdPart
+4. **待機（ホールド）のパーツ**（procgeo.js holdGeometry・holdLeg、procedures.js、ui-proc.js、ui-aip.js）。STPT・区間距離に入らない
+5. **フィックス「RW21R」「RW21R D5.1」**（procgeo.js localCtx：AIP の THR、延長線上）。fixDefs の解決もこれを使える
+6. 確認画面：APP の復行・待機を要約に、図から読んだ定義（候補）、読めなかった進入チャートの欄
+7. **未確認の表示**（ユーザー依頼 2026-11-14）：取り込んだ手順は verified:false（procedures.js isUnverified・markVerified）。一覧の印・エディターの帯と「確認した」（verifyHtml）・ルートの選択の「（未確認）」・地図の開始点の下（proc-render.js unverifiedTag）。0.2.6 以前の aip- も未確認
+
+## 検証
+- 単体 41/41（新規：未確認の判定、ルーラーの表記と ON/OFF、待機のレーストラック、進入チャートの名前・復行の文章 7 種・延長線上の点）
+- 画面：e2e-ruler（新規 13 項目：マウスで2点・仮の点線・NAVAID に吸い付く・置く間は地点情報を開かない・端点ドラッグで地図は動かない・3回目は地点情報・吸い付き 0・ボタンで消える・TAC・B/E 行・タッチで置く・タッチで端点ドラッグ・端点以外は地図移動）
+- e2e-iac（新規 10 項目、百里の zip）：取り込んだ手順は全部未確認（一覧・地図）、「確認した」で消える（一覧は1つ減る・再読込後も）、ルートの選択に（未確認）／RNP RWY21R＝NAKAH → MAGRY → OMITT → H1R52 → RW21R、復行 NAKAH、待機の閉じたレーストラックと注記／VOR RWY21R＝IF（延長線上 10.6nm）→ FAF → RW21R／エディターの候補／ルートの DST で APP、MISSED APP の点は NAKAH まで
+- e2e・e2e-gesture（地図の操作を分けた後も 0.2.4 と同じ値）・e2e-nav・e2e-proc・e2e-route-proc すべてエラー 0
+- e2e-aip（9空港の zip）：541 本（APP 113）、31 秒。NAV データ無しで 473 本は警告なし（0.2.6 は 428 本中 379）
+- tests/aip-corpus.mjs：進入チャート 100 枚（画像を除く）→ APP 119 本、RNP 44 本中 37 本は IAF/IF → FAF → MAPt がつながる、復行 105、待機 100（図から読めた 53）。RNP の座標の抜け 0
+- 待機の図の読み取りは百里（TAIYO 261° L・NAKAH 182° L）・那覇（OLVAL 062° R）をチャートの画像と目視で一致。百里 RNP RWY21R の挿絵は PDF の文字が壊れていて読めない（入ってくる向きで描き、警告）
+- FUNCTIONS：444 → 487（tools/gen_functions_md.py）。60 行超は createView のみ
+
+## 残り（0.2.7 のうち）
+- 実機確認：ルーラーの吸い付く範囲、待機の形
+- IAC の未対応：RNP の途中の高度、IAF から IF までの間のフィックス以外の経路（RF レグ等）、従来型の IAF からの経路（候補から手で）、周回進入の行き先
+
+---
+
 # HANDOFF 0.2.6（2026-11-14 パブリッシュ）
 
 ## できたこと（ユーザー決定は SPEC.md §8c）
@@ -16,7 +50,6 @@
 - FUNCTIONS：427 → 444（+17、削除なし）。60 行超は createView のみ。Scanner のメソッドも最長 41 行
 
 ## 残り
-- Android タブレット実機での確認
 - 0.2.7：進入チャート（IAC）
 
 ---

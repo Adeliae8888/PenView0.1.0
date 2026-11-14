@@ -17,6 +17,7 @@ function partText(pt) {
   if (pt.type === 'heading') return `${pt.rwyHdg && (pt.hdg === null || pt.hdg === undefined) ? 'RWY HDG' : `HDG ${h3(pt.hdg)}°`}→${end(pt.end)}`;
   if (pt.type === 'turnhdg') return `${pt.dir} HDG ${h3(pt.hdg)}°→${end(pt.end)}`;
   if (pt.type === 'radial') return `${pt.station} R${h3(pt.radial)}${pt.inbound ? ' 局へ' : ''}→${end(pt.end)}`;
+  if (pt.type === 'hold') return `HOLD ${pt.inbound === null || pt.inbound === undefined || pt.inbound === '' ? '入る向き' : `${h3(pt.inbound)}°`} ${pt.dir === 'L' ? 'L' : 'R'}`;
   if (pt.type === 'arc') return `ARC ${pt.station} ${pt.dme} ${pt.dir === 'L' ? 'CCW' : 'CW'}→${pt.xFix || (pt.endBy === 'other' ? `${pt.xStation} R${h3(pt.xRadial)}` : `R${h3(pt.to)}`)}`;
   return pt.to || '';
 }
@@ -24,7 +25,8 @@ function partText(pt) {
 /* ==== partSummary ==== 「RWY HDG→600ft → HUC R047→ D8.0 ≤8000 → GOPVU ≤10000」 */
 function partSummary(p) {
   const head = p.startFix ? [`${p.startFix}${p.startAlt ? ` ${p.startAlt}` : ''}`] : [];
-  return [...head, ...p.parts.map((pt) => `${partText(pt)}${altTxt(pt.alt)}`)].join(' → ');
+  const main = [...head, ...p.parts.map((pt) => `${partText(pt)}${altTxt(pt.alt)}`)].join(' → ');
+  return p.missed?.length ? `${main} ／ 復行：${p.missed.map((pt) => `${partText(pt)}${altTxt(pt.alt)}`).join(' → ')}` : main;
 }
 
 function procRow(p, exists) {
@@ -32,9 +34,10 @@ function procRow(p, exists) {
   const warn = p.warnings?.length ? `<div class="warn small">${p.warnings.map(esc).join('<br>')}</div>` : '';
   const d = state.settings.aipDefaults;
   const dflt = p.defaulted ? `<div class="muted small">既定値で補った値があります（上昇勾配 ${d.grad}%・旋回 ${d.kias}KIAS・バンク ${d.bank}°）</div>` : '';
-  const src = p.source?.text ? `<details class="small"><summary>原文</summary><span class="muted">${esc(p.source.text)}</span></details>` : '';
+  const src = p.source?.text ? `<details class="small"><summary>原文${p.type === 'APP' ? '（復行）' : ''}</summary><span class="muted">${esc(p.source.text)}</span></details>` : '';
+  const hints = p.hints?.length ? `<details class="small"><summary>図から読んだ定義（候補）</summary><span class="muted">${p.hints.map(esc).join('<br>')}</span></details>` : '';
   return `<label class="aip-row"><input type="checkbox" data-aipproc="${esc(p.id)}" checked /><span><b>${esc(procLabel(p))}</b>${exists.has(p.id) ? ' <span class="tag">上書き</span>' : ''}${parents}
-    <br><span class="muted small">${esc(partSummary(p))}</span>${warn}${dflt}${src}</span></label>`;
+    <br><span class="muted small">${esc(partSummary(p))}</span>${warn}${dflt}${src}${hints}</span></label>`;
 }
 
 function skippedHtml(sk) {
@@ -42,7 +45,7 @@ function skippedHtml(sk) {
   const n = sk.text.length + sk.iac.length + sk.image.length;
   if (!n) return '';
   return `<details><summary>読まなかった PDF（${n}）</summary>
-    ${list('説明文が読めなかった SID/STAR（画像・未対応の書き方）', sk.text)}${list('進入チャート（0.2.7 で対応予定）', sk.iac)}${list('文字の無い画像の PDF（読めません）', sk.image)}</details>`;
+    ${list('説明文が読めなかった SID/STAR（画像・未対応の書き方）', sk.text)}${list('進入チャート（名前・内容が読めなかったもの）', sk.iac)}${list('文字の無い画像の PDF（読めません）', sk.image)}</details>`;
 }
 
 /* ==== renderReview ==== 確認画面 */
@@ -82,8 +85,8 @@ export function renderAipSection() {
 /* ==== markUnknownFixes ==== PDF にも登録済みの地点（国土交通省の NAV データ等）にも無いフィックスを警告に */
 function markUnknownFixes(procs) {
   procs.forEach((p) => {
-    const names = [p.startFix, ...p.parts.flatMap((q) => [q.to, q.xFix, q.station, q.xStation, q.end?.station, String(q.end?.to || '').split(' ')[0]])]
-      .filter((n) => n && /^[A-Z][A-Z0-9]{1,5}$/.test(n));
+    const names = [p.startFix, ...[...p.parts, ...(p.missed || [])].flatMap((q) => [q.to, q.xFix, q.station, q.xStation, q.end?.station, String(q.end?.to || '').split(' ')[0]])]
+      .filter((n) => n && /^[A-Z][A-Z0-9]{1,5}$/.test(n) && !/^RW\d{2}[LRC]?$/.test(n));   // RW21R＝滑走路末端（AD2）
     const unknown = [...new Set(names.filter((n) => !p.wpts?.[n] && !p.fixDefs?.[n] && !findPoint(n)))];
     p.warnings = (p.warnings || []).filter((w) => !/座標が PDF にありません/.test(w));
     if (unknown.length) p.warnings.push(`座標が見つかりません：${unknown.join('・')}（国土交通省の NAV データを読み込むと引けます）`);

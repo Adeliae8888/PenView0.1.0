@@ -1,7 +1,7 @@
 /* ==== ui-route.js ==== ルート編集（経路・代替経路・STPT 詳細）とフライトログ表 */
 import { state, emit, currentVariation } from './state.js';
 import { routes, activeRoute, setActiveRoute, newRoute, removeRoute, duplicateRoute, addPoint, removePoint, movePoint, resetFlight, saveRoutes, setActiveIdx, pointTag } from './route.js';
-import { procedures } from './procedures.js';
+import { procedures, isUnverified } from './procedures.js';
 import { procChoices, destPoint } from './route-proc.js';
 import { syncProcRoutes } from './proc-wire.js';
 import { aircraftList } from './aircraft.js';
@@ -55,7 +55,7 @@ function procPicker(r, roles) {
   const one = (role) => {
     const choices = procChoices(r, role, procedures());
     if (!choices.length) return '';
-    const opts = choices.map((p) => `<option value="${esc(p.id)}" ${r.procs?.[role] === p.id ? 'selected' : ''}>${esc(p.name || '(名前なし)')}${p.type === 'SID' && p.rwy ? ` RWY${esc(p.rwy)}` : ''}</option>`).join('');
+    const opts = choices.map((p) => `<option value="${esc(p.id)}" ${r.procs?.[role] === p.id ? 'selected' : ''}>${esc(p.name || '(名前なし)')}${p.type === 'SID' && p.rwy ? ` RWY${esc(p.rwy)}` : ''}${isUnverified(p) ? '（未確認）' : ''}</option>`).join('');
     return `<label>${ROLE_LABEL[role]}<select data-rf="proc:${role}"><option value="">なし</option>${opts}</select></label>`;
   };
   const html = roles.map(one).join('');

@@ -127,7 +127,7 @@ function joinGlyphs(items) {
 }
 
 /* ==== tokens ==== 行の文字（items）を空白で区切った語に（x・幅つき） */
-function tokens(items) {
+export function tokens(items) {
   return joinGlyphs(items).flatMap((it) => {
     const parts = it.s.split(/(\s+)/);
     const cw = it.w / Math.max(1, it.s.length);

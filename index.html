@@ -42,6 +42,7 @@
     <button type="button" id="zoomOut" class="btn round" aria-label="縮小">－</button>
     <button type="button" id="followBtn" class="btn round" aria-label="自機を中央に固定して Heading-up">◎</button>
     <button type="button" id="gridBtn" class="btn round" aria-label="グリッド表示">#</button>
+    <button type="button" id="rulerBtn" class="btn round" aria-label="ルーラー（2点の方位・距離）"><svg viewBox="-12 -12 24 24" aria-hidden="true"><g transform="rotate(-45)"><rect x="-11" y="-4" width="22" height="8" rx="1.5"/><path d="M-7-4v3.5M-3-4v2M1-4v3.5M5-4v2"/></g></svg></button>
   </nav>
 
   <div class="scale"><div id="scaleBar" class="scale-bar"></div><span id="scaleLabel"></span></div>
@@ -96,6 +97,14 @@
         <button type="button" id="bullApply" class="btn primary">設定</button>
       </div>
       <p id="bullStatus" class="muted"></p>
+    </section>
+
+    <section class="group">
+      <h3>ルーラー</h3>
+      <div class="row wrap">
+        <label>吸い付く範囲 px <input id="rulerSnap" type="number" min="0" max="80" step="2" inputmode="numeric" /></label>
+      </div>
+      <p class="muted">端点を置く・動かすとき、この範囲内の NAVAID・WPT・STPT 等に吸い付きます（0＝吸い付かない）</p>
     </section>
 
     <section class="group">

@@ -163,7 +163,30 @@ function partGeometry(part, cur, ctx) {
   }
   if (part.type === 'arc') return arcGeometry(part, from, ctx);
   if (part.type === 'turnhdg') return turnHeadingGeometry(part, cur, ctx);
+  if (part.type === 'hold') return holdGeometry(part, cur);
   return { error: '不明なパーツ' };
+}
+
+export const DEFAULT_HOLD_KIAS = 230;
+
+/* ==== holdGeometry ==== 待機（レーストラック）：今の点が待機フィックス。入航コース（磁）でフィックスに入り、旋回方向へ 180° 旋回 → 出航 → 180° 旋回 → 入航
+ * 出航の長さ＝分（既定 1 分、速度は KIAS と高度から TAS）または距離 nm。旋回半径は KIAS・25° バンク。進む先は変えない（フィックスの点は増やさない） */
+function holdGeometry(part, cur) {
+  const F = cur.p;
+  const auto = part.inbound === null || part.inbound === undefined || part.inbound === '';
+  if (auto && !Number.isFinite(cur.c)) return { error: '待機の入航コースを入れてください' };
+  const c = auto ? cur.c : toTrue(Number(part.inbound), gsiVariation(F.lat, F.lon) ?? 0);
+  const kias = Number(part.kias) || DEFAULT_HOLD_KIAS;
+  const alt = Number(part.alt?.v) || cur.alt || 0;
+  const r = turnRadiusNm({ mode: 'perf', kias, alt, bank: DEFAULT_BANK_DEG });
+  const len = Number(part.legNm) > 0 ? Number(part.legNm) : (toTas({ unit: 'IAS', value: kias }, alt) * (Number(part.min) || 1)) / 60;
+  const s = part.dir === 'L' ? -1 : 1;
+  const P = destination(F, c + 180, len);
+  const arc = (center, b0) => Array.from({ length: 61 }, (_, i) => destination(center, b0 + s * i * 3, r));
+  const turn1 = arc(destination(F, c + 90 * s, r), c - 90 * s);
+  const turn2 = arc(destination(P, c + 90 * s, r), c + 90 * s);
+  const inMag = Math.round(toMagnetic(c, gsiVariation(F.lat, F.lon) ?? 0));
+  return { hold: true, pts: [F, ...turn1, ...turn2, P, F], end: F, endName: '', c0: c, c1: c, outMid: destination(turn1.at(-1), c + 180, len / 2), legNm: len, radius: r, inMag, auto };
 }
 
 /* ==== turnHeadingGeometry ==== 旋回して針路（turn left HDG 002° など）：今の進路から指定の向きに旋回し、針路に乗ってから終わりの条件まで直進
@@ -301,6 +324,7 @@ function buildLegs(parts, start, ctx, out, dashed) {
   parts.forEach((part, i) => {
     const g = partGeometry(part, cur, ctx);
     if (g.error) { out.warnings.push(`${dashed ? '復行 ' : ''}${i + 1}：${g.error}`); return; }
+    if (g.hold) { holdLeg(part, g, out, dashed); cur = { ...cur, c: g.c1, alt: Number(part.alt?.v) || cur.alt }; return; }
     // 「旋回して針路」の turn は自分の旋回の半径（角の丸めではない）
     const turn = part.turn && part.type !== 'turnhdg' && prevGeom ? filletTurn(prevGeom, g, turnRadiusNm(part.turn)) : null;
     if (turn?.error) out.warnings.push(`${i + 1}：${turn.error}`);
@@ -325,6 +349,15 @@ function buildLegs(parts, start, ctx, out, dashed) {
   return { cur, prevGeom };
 }
 
+/* ==== holdLeg ==== 待機の線と注記「HOLD 090° R 1MIN」（出航側の中ほど）。フィックス（STPT）は増やさない */
+function holdLeg(part, g, out, dashed) {
+  out.segments.push({ pts: g.pts, dashed, hold: true, partId: part.id });
+  const crs = String(g.inMag % 360 || 360).padStart(3, '0');
+  const leg = Number(part.legNm) > 0 ? `${Number(part.legNm)}NM` : `${Number(part.min) || 1}MIN`;
+  const alt = part.alt?.v ? ` ${part.alt.v}` : '';
+  out.labels.push({ ...g.outMid, kind: 'course', text: `HOLD ${crs}°${g.auto ? '（入る向き）' : ''} ${part.dir === 'L' ? 'L' : 'R'} ${leg}${alt}`, partId: part.id, which: 'course', off: part.lbl2 });
+}
+
 /* ==== findRunway ==== 滑走路を名前で。AIP の L/R つきしか無いとき「03」は「03L」などの最初に当たるもの */
 export function findRunway(ad, d) {
   if (!ad?.rwy || !d) return null;
@@ -337,14 +370,22 @@ function localCtx(proc, ctx) {
   const w = proc.wpts || {};
   const defs = proc.fixDefs || {};
   const rel = ctx.relatedFixes?.(proc) || {};
-  if (!Object.keys(w).length && !Object.keys(rel).length && !Object.keys(defs).length) return ctx;
   const pick = (map, n) => { const k = String(n || '').toUpperCase().trim(); return map[k] ? { name: k, ...map[k] } : null; };
   // チャートの図の定義（「GOPVU＝HUC R-047 D32.5」）：登録済みの地点に無いときに使う
-  const def = (n) => { const k = String(n || '').toUpperCase().trim(); const p = defs[k] && resolveFix(defs[k], ctx); return p ? { ...p, name: k } : null; };
+  // 「RW21R」＝その飛行場の滑走路末端（AIP AD2 の THR。進入の最後）。「RW21R D5.1」＝末端から手前（延長線上）5.1nm
+  const thr = (n) => {
+    const m = String(n || '').toUpperCase().trim().match(/^RW(\d{2}[LRC]?)(?:\s+D(\d+(?:\.\d+)?))?$/);
+    const r = m && proc.ad && findRunway(ctx.findAirport?.(proc.ad), m[1]);
+    if (!r?.thr || r.d.slice(0, 2) !== m[1].slice(0, 2)) return null;
+    if (!m[2]) return { name: `RW${m[1]}`, lat: r.thr.lat, lon: r.thr.lon };
+    return Number.isFinite(r.hdg) ? { name: '', ...destination(r.thr, r.hdg + 180, Number(m[2])) } : null;
+  };
+  const thrCtx = { ...ctx, findPoint: (n) => ctx.findPoint(n) || thr(n), resolvePoint: (t) => ctx.resolvePoint(t) || thr(t) };
+  const def = (n) => { const k = String(n || '').toUpperCase().trim(); const p = defs[k] && resolveFix(defs[k], thrCtx); return p ? { ...p, name: k } : null; };
   return {
     ...ctx,
-    findPoint: (n) => pick(w, n) || ctx.findPoint(n) || def(n) || pick(rel, n),
-    resolvePoint: (t) => pick(w, t) || ctx.resolvePoint(t) || def(t) || pick(rel, t),
+    findPoint: (n) => pick(w, n) || ctx.findPoint(n) || def(n) || pick(rel, n) || thr(n),
+    resolvePoint: (t) => pick(w, t) || ctx.resolvePoint(t) || def(t) || pick(rel, t) || thr(t),
   };
 }
 
@@ -392,6 +433,7 @@ function annotatePath(out) {
   const cumAt = {};
   let cum = 0;
   out.segments.forEach((sg) => {
+    if (sg.hold) return;   // 待機の周回は区間距離に入れない
     cum += polyLenNm(sg.pts);
     if (sg.partId) cumAt[sg.partId] = cum;
   });

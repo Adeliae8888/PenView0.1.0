@@ -2,6 +2,7 @@
  * 高度制限：以上＝下線、以下＝上線、指定高度＝上下線、範囲＝上の値に上線・下の値に下線（AIP の書き方） */
 import { esc } from './map-render.js';
 import { buildProcedure } from './procgeo.js';
+import { isUnverified } from './procedures.js';
 
 const CHAR_PX = 6.6;
 const LINE_PX = 12;
@@ -68,11 +69,18 @@ function labelSvg(view, proc, l) {
   return leader + out;
 }
 
+/* ==== unverifiedTag ==== チャートから読み込んで未確認の手順：開始点の下に「未確認」 */
+function unverifiedTag(view, s) {
+  const p = view.geoToScreen(s.lat, s.lon);
+  return `<g class="proc-unv" transform="translate(${(p.x - 22).toFixed(1)} ${(p.y + 20).toFixed(1)})"><rect width="44" height="16" rx="3"/><text x="22" y="12" text-anchor="middle">未確認</text></g>`;
+}
+
 /* ==== drawProcedures ==== 表示する手順をすべて描く。editingId の手順は強調、activePartId（航法中の区間）は航法色で太く、onRoute（ルートで選んだ手順）は太く */
 export function drawProcedures(view, procs, ctx, editingId, activePartId = null, onRoute = new Set()) {
   return procs.map((proc) => {
     const r = built(proc, ctx);
-    const cls = `proc${proc.id === editingId ? ' editing' : ''}${onRoute.has(proc.id) ? ' on-route' : ''} proc-${proc.type.toLowerCase()}`;
+    const unv = isUnverified(proc);
+    const cls = `proc${proc.id === editingId ? ' editing' : ''}${onRoute.has(proc.id) ? ' on-route' : ''} proc-${proc.type.toLowerCase()}${unv ? ' unverified' : ''}`;
     let out = (r.guides || []).map((gd) => `<path class="proc-guide" d="${polyline(view, gd)}"/>`).join('');
     out += r.segments.map((sg) => `<path class="proc-line${sg.dashed ? ' missed' : ''}${sg.turn ? ' turn' : ''}${activePartId && sg.partId === activePartId ? ' active' : ''}" d="${polyline(view, sg.pts)}"/>`).join('');
     r.fixes.forEach((f) => {
@@ -86,6 +94,7 @@ export function drawProcedures(view, procs, ctx, editingId, activePartId = null,
       out += `<circle class="proc-start${r.start.estimated ? ' est' : ''}" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="5"/><text class="proc-fix" x="${(p.x + 8).toFixed(1)}" y="${(p.y + 14).toFixed(1)}">${esc(r.start.name || '')}${r.start.estimated ? '（推定）' : ''}</text>`;
     }
     out += r.labels.map((l) => labelSvg(view, proc, l)).join('');
+    if (unv && r.start) out += unverifiedTag(view, r.start);
     return `<g class="${cls}">${out}</g>`;
   }).join('');
 }

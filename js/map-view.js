@@ -90,52 +90,63 @@ export function createView(svg, proj) {
  * zoomAnchor()：拡大縮小・回転の中心を固定したいとき {x,y} を返す（◎ 中は自機）
  * onUserMove：1本指で PAN_RELEASE_PX 以上動かしたときだけ（◎ を外す）。2本指が触れた操作では、指を全部離すまで移動しない（ピンチで ◎ が外れない）
  * onUserRotate：2本指で ROTATE_START_DEG 以上回したとき（以後はその操作の間ずっと回る）
+ * onAnyTap：タッチ・マウス共通の短いタップ。true を返したらその操作はそこで終わり（ルーラーの端点置き）
+ * grab(x,y)：1本目の指・ボタンを押したとき true を返すと、その操作は地図を動かさず dragTo(x,y) → drop() に渡す（ルーラーの端点）
  * タッチ：シングルタップ＝onPoint のみ、長押し＝onLongPress。マウス：クリック＝onTap、右クリック＝onLongPress */
 export function attachGestures(svg, view, handlers) {
-  const { onTap, onLongPress, onPoint, onGestureEnd, zoomAnchor } = handlers;
-  let pressTimer = null;
-  const cancelPress = () => { clearTimeout(pressTimer); pressTimer = null; };
   const local = (e) => { const r = svg.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  const g = { pointers: new Map(), tapStart: null, pinch: null, multi: false, panned: 0, rotating: false, turned: 0 };
-  svg.addEventListener('pointerdown', (e) => {
-    svg.setPointerCapture(e.pointerId);
-    g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    g.tapStart = g.pointers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false } : null;
-    if (g.pointers.size === 1) {
-      const p = local(e);
-      onPoint?.(p.x, p.y);
-      if (e.pointerType !== 'mouse') pressTimer = setTimeout(() => { pressTimer = null; g.tapStart = null; onLongPress?.(p.x, p.y); }, LONG_PRESS_MS);
-    } else cancelPress();
-    if (g.pointers.size === 2) { g.pinch = pinchInfo(g.pointers); g.multi = true; }
-  });
-  svg.addEventListener('pointermove', (e) => {
-    const prev = g.pointers.get(e.pointerId);
-    if (!prev) {
-      if (e.pointerType === 'mouse') { const p = local(e); onPoint?.(p.x, p.y); }
-      return;
-    }
-    const cur = { x: e.clientX, y: e.clientY };
-    g.pointers.set(e.pointerId, cur);
-    if (g.tapStart && Math.hypot(cur.x - g.tapStart.x, cur.y - g.tapStart.y) > TAP_MOVE_PX) { g.tapStart.moved = true; cancelPress(); }
-    if (g.pointers.size === 1 && !g.multi && (!g.tapStart || g.tapStart.moved)) panStep(view, g, prev, cur, handlers);
-    else if (g.pointers.size === 2 && g.pinch) pinchStep(view, g, svg.getBoundingClientRect(), handlers);
-  });
-  const end = (e) => {
-    const r = svg.getBoundingClientRect();
-    cancelPress();
-    if (e.pointerType === 'mouse' && g.tapStart && !g.tapStart.moved && g.pointers.size === 1 && performance.now() - g.tapStart.t < TAP_TIME_MS) {
-      onTap?.(e.clientX - r.left, e.clientY - r.top);
-    }
-    g.pointers.delete(e.pointerId);
-    g.pinch = g.pointers.size < 2 ? null : g.pinch;
-    g.tapStart = null;
-    if (g.pointers.size === 0) {
-      Object.assign(g, { multi: false, panned: 0, rotating: false, turned: 0 });
-      onGestureEnd?.();
-    }
-  };
+  const g = { pointers: new Map(), tapStart: null, pinch: null, multi: false, panned: 0, rotating: false, turned: 0, pressTimer: null, grabbing: false };
+  svg.addEventListener('pointerdown', (e) => { svg.setPointerCapture(e.pointerId); gestureDown(g, e, local(e), handlers); });
+  svg.addEventListener('pointermove', (e) => gestureMove(g, e, local(e), view, svg, handlers));
+  const end = (e) => gestureEnd(g, e, local(e), handlers);
   ['pointerup', 'pointercancel'].forEach((t) => svg.addEventListener(t, end));
-  attachWheelAndMenu(svg, view, local, { onLongPress, zoomAnchor });
+  attachWheelAndMenu(svg, view, local, handlers);
+}
+
+function cancelPress(g) { clearTimeout(g.pressTimer); g.pressTimer = null; }
+
+/* ==== gestureDown ==== 指・ボタンを押した：タップ候補・長押しタイマー・端点つかみ・2本指の開始 */
+function gestureDown(g, e, p, { onPoint, onLongPress, grab, drop }) {
+  g.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  g.tapStart = g.pointers.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now(), moved: false, type: e.pointerType } : null;
+  if (g.pointers.size === 1) {
+    onPoint?.(p.x, p.y);
+    if (e.button === 0 && grab?.(p.x, p.y)) { g.grabbing = true; return; }
+    if (e.pointerType !== 'mouse') g.pressTimer = setTimeout(() => { g.pressTimer = null; g.tapStart = null; onLongPress?.(p.x, p.y); }, LONG_PRESS_MS);
+  } else cancelPress(g);
+  if (g.grabbing) { g.grabbing = false; drop?.(); }   // 2本目の指が触れたら、つかみをやめてピンチへ
+  if (g.pointers.size === 2) { g.pinch = pinchInfo(g.pointers); g.multi = true; }
+}
+
+/* ==== gestureMove ==== 移動：つかみ中は端点を動かす、1本指は地図移動、2本指はピンチ */
+function gestureMove(g, e, p, view, svg, handlers) {
+  const prev = g.pointers.get(e.pointerId);
+  if (!prev) {
+    if (e.pointerType === 'mouse') handlers.onPoint?.(p.x, p.y);
+    return;
+  }
+  const cur = { x: e.clientX, y: e.clientY };
+  g.pointers.set(e.pointerId, cur);
+  if (g.tapStart && Math.hypot(cur.x - g.tapStart.x, cur.y - g.tapStart.y) > TAP_MOVE_PX) { g.tapStart.moved = true; cancelPress(g); }
+  if (g.grabbing) { handlers.onPoint?.(p.x, p.y); handlers.dragTo?.(p.x, p.y); return; }
+  if (g.pointers.size === 1 && !g.multi && (!g.tapStart || g.tapStart.moved)) panStep(view, g, prev, cur, handlers);
+  else if (g.pointers.size === 2 && g.pinch) pinchStep(view, g, svg.getBoundingClientRect(), handlers);
+}
+
+/* ==== gestureEnd ==== 離した：タップ判定（onAnyTap → マウスなら onTap）、つかみの終わり、操作の終わり */
+function gestureEnd(g, e, p, { onTap, onAnyTap, drop, onGestureEnd }) {
+  cancelPress(g);
+  const t = g.tapStart;
+  const isTap = t && !t.moved && g.pointers.size === 1 && performance.now() - t.t < TAP_TIME_MS;
+  if (g.grabbing) { g.grabbing = false; drop?.(); }
+  else if (isTap && !onAnyTap?.(p.x, p.y) && e.pointerType === 'mouse') onTap?.(p.x, p.y);
+  g.pointers.delete(e.pointerId);
+  g.pinch = g.pointers.size < 2 ? null : g.pinch;
+  g.tapStart = null;
+  if (g.pointers.size === 0) {
+    Object.assign(g, { multi: false, panned: 0, rotating: false, turned: 0 });
+    onGestureEnd?.();
+  }
 }
 
 /* ==== panStep ==== 1本指の移動。◎ 中は PAN_RELEASE_PX までは動かさない（指の震え・2本目の指が遅れて触れる間に ◎ が外れないように） */

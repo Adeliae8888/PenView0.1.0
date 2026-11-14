@@ -1,10 +1,11 @@
-/* ==== aip-import.js ==== AIP の PDF（空港ごとの zip のまま、または PDF）を読む：AD2 → 滑走路、RNAV の SID/STAR → 手順
+/* ==== aip-import.js ==== AIP の PDF（空港ごとの zip のまま、または PDF）を読む：AD2 → 滑走路、SID/STAR → 手順、進入チャート（IAC）→ APP（0.2.7）
  * 読むだけ（scanAip）と、確認画面で選んだものを保存する（applyAip）を分ける。滑走路は IndexedDB の aipRunways に飛行場ごと */
 import { load, save } from './store.js';
 import { unzip } from './zip.js';
 import { pdfPages } from './pdf-text.js';
 import { parseAd2, tablesToProcs, linkTransitions, waypointTable } from './aip-parse.js';
 import { textToProcs } from './aip-text.js';
+import { iacToProcs, iacFixes } from './aip-iac.js';
 
 const RWY_KEY = 'aipRunways';
 let runways = {};                          // { ICAO: { runways:[…], eff, file, importedAt } }
@@ -71,10 +72,15 @@ export async function scanAip(files, { onProgress = () => {}, existing = [], lib
     onProgress(`読み取り中 ${i + 1}/${pdfs.length}：${base(f.path)}`);
     const pages = await pdfPages(pdf, f.bytes);
     Object.entries(waypointTable(pages)).forEach(([k, v]) => { (pool[c.icao] ||= {})[k] ||= v; });
-    if (c.kind === 'IAC') { res.skipped.iac.push(base(f.path)); continue; }
     const words = pages.reduce((n, p) => n + p.items.length, 0);
     if (words < 30) { res.skipped.image.push(base(f.path)); continue; }
     const source = { file: base(f.path), eff: effOf(f.path) };
+    if (c.kind === 'IAC') {
+      iacFixes(pages).forEach((x) => { if (/^[A-Z][A-Z0-9]{4}$/.test(x.name)) (pool[c.icao] ||= {})[x.name] ||= { lat: x.lat, lon: x.lon }; });   // 進入チャートの座標の一覧も他の手順に使う
+      const app = iacToProcs(pages, { icao: c.icao, source, defaults }).filter((p) => p.parts.length || p.missed.length || p.startFix);
+      if (app.length) res.procs.push(...app); else res.skipped.iac.push(base(f.path));
+      continue;
+    }
     if (c.kind === 'AD2') {
       const r = parseAd2(pages);
       if (r.runways.length) res.runways.push({ icao: r.icao || c.icao, runways: r.runways, ...source });
@@ -95,7 +101,7 @@ export async function scanAip(files, { onProgress = () => {}, existing = [], lib
 function fillWaypoints(procs, pool) {
   procs.forEach((p) => {
     const table = pool[p.ad] || {};
-    [p.startFix, ...p.parts.map((q) => q.to || q.xFix)].forEach((n) => {
+    [p.startFix, ...p.parts.map((q) => q.to || q.xFix), ...(p.missed || []).map((q) => q.to || q.xFix)].forEach((n) => {
       if (n && /^[A-Z][A-Z0-9]{1,5}$/.test(n) && !p.wpts[n] && table[n]) p.wpts[n] = table[n];
     });
   });
@@ -107,7 +113,7 @@ export async function applyAip(res, { runwayIcaos, procIds }) {
     runways[r.icao] = { runways: r.runways, eff: r.eff, file: r.file, importedAt: Date.now() };
   });
   await save(RWY_KEY, runways);
-  return res.procs.filter((p) => procIds.has(p.id)).map(({ warnings, lastFix, side, defaulted, ...p }) => p);
+  return res.procs.filter((p) => procIds.has(p.id)).map(({ warnings, lastFix, side, defaulted, ...p }) => ({ ...p, verified: false }));   // 読み直すと未確認に戻る   // hints（従来型の進入の候補）は残す：エディターに出す
 }
 
 /* ==== mergeAipRunways ==== 書き出しファイルからの読込（同じ飛行場は置き換え） */
