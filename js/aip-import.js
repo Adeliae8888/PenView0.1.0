@@ -3,7 +3,8 @@
 import { load, save } from './store.js';
 import { unzip } from './zip.js';
 import { pdfPages } from './pdf-text.js';
-import { parseAd2, tablesToProcs, linkTransitions } from './aip-parse.js';
+import { parseAd2, tablesToProcs, linkTransitions, waypointTable } from './aip-parse.js';
+import { textToProcs } from './aip-text.js';
 
 const RWY_KEY = 'aipRunways';
 let runways = {};                          // { ICAO: { runways:[…], eff, file, importedAt } }
@@ -59,16 +60,18 @@ async function collectPdfs(files, onProgress) {
 }
 
 /* ==== scanAip ==== 読んで結果を返す（保存はしない）。lib＝pdf.js（テストで差し替え） */
-export async function scanAip(files, { onProgress = () => {}, existing = [], lib = null } = {}) {
+export async function scanAip(files, { onProgress = () => {}, existing = [], lib = null, defaults = {} } = {}) {
   const pdfs = await collectPdfs(files, onProgress);
   const pdf = lib || await pdfjs();
   const res = { runways: [], procs: [], skipped: { text: [], iac: [], image: [], other: 0 } };
+  const pool = {};                     // 全 PDF の座標（RNAV の座標表・進入チャートの一覧・図の中の座標）：従来型の手順のフィックスに使う
   for (const [i, f] of pdfs.entries()) {
     const c = classifyPdf(f.path);
     if (c.kind === 'OTHER') { res.skipped.other += 1; continue; }
-    if (c.kind === 'IAC') { res.skipped.iac.push(base(f.path)); continue; }
     onProgress(`読み取り中 ${i + 1}/${pdfs.length}：${base(f.path)}`);
     const pages = await pdfPages(pdf, f.bytes);
+    Object.entries(waypointTable(pages)).forEach(([k, v]) => { (pool[c.icao] ||= {})[k] ||= v; });
+    if (c.kind === 'IAC') { res.skipped.iac.push(base(f.path)); continue; }
     const words = pages.reduce((n, p) => n + p.items.length, 0);
     if (words < 30) { res.skipped.image.push(base(f.path)); continue; }
     const source = { file: base(f.path), eff: effOf(f.path) };
@@ -77,12 +80,25 @@ export async function scanAip(files, { onProgress = () => {}, existing = [], lib
       if (r.runways.length) res.runways.push({ icao: r.icao || c.icao, runways: r.runways, ...source });
       continue;
     }
-    const procs = tablesToProcs(pages, { icao: c.icao, side: c.kind, source });
+    // RNAV の表と従来型の説明文の両方を読む（1つの PDF に混ざることがある）。同じ手順なら表を使う
+    const fromTable = tablesToProcs(pages, { icao: c.icao, side: c.kind, source });
+    const procs = [...fromTable, ...textToProcs(pages, { icao: c.icao, side: c.kind, source, defaults }).filter((p) => !fromTable.some((q) => q.id === p.id || q.name === p.name))];
     if (procs.length) res.procs.push(...procs); else res.skipped.text.push(base(f.path));
   }
+  fillWaypoints(res.procs, pool);
   linkTransitions(res.procs, existing);
   onProgress(`読み取り完了：滑走路 ${res.runways.length} 飛行場・手順 ${res.procs.length} 本`);
   return res;
+}
+
+/* ==== fillWaypoints ==== 手順のフィックスで座標の無いものを、同じ飛行場の他の PDF の座標で埋める */
+function fillWaypoints(procs, pool) {
+  procs.forEach((p) => {
+    const table = pool[p.ad] || {};
+    [p.startFix, ...p.parts.map((q) => q.to || q.xFix)].forEach((n) => {
+      if (n && /^[A-Z][A-Z0-9]{1,5}$/.test(n) && !p.wpts[n] && table[n]) p.wpts[n] = table[n];
+    });
+  });
 }
 
 /* ==== applyAip ==== 確認画面で選んだ滑走路を保存し、手順を返す（手順の保存は呼ぶ側で mergeProcedures） */
@@ -91,7 +107,7 @@ export async function applyAip(res, { runwayIcaos, procIds }) {
     runways[r.icao] = { runways: r.runways, eff: r.eff, file: r.file, importedAt: Date.now() };
   });
   await save(RWY_KEY, runways);
-  return res.procs.filter((p) => procIds.has(p.id)).map(({ warnings, lastFix, side, ...p }) => p);
+  return res.procs.filter((p) => procIds.has(p.id)).map(({ warnings, lastFix, side, defaulted, ...p }) => p);
 }
 
 /* ==== mergeAipRunways ==== 書き出しファイルからの読込（同じ飛行場は置き換え） */

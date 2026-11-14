@@ -100,5 +100,16 @@
 - 手順の中の名前のあるウェイポイント（GOPVU・LICEN など）は WPT と同じ形（三角＋名前）で手順の色。D8.0 HUC・2105FT などは従来の注記。ルートに入れた手順は STPT のラベルに名前が出るので三角だけ
 - 離陸前に手順を入れ直したら、アクティブ STPT は最初の STPT に戻す（飛行中は航法中の点を保つ）
 
+## 8c. 0.2.6（決定 2026-11-14）
+- 従来型の SID/STAR/TRANSITION をチャートの説明文から読む（RNAV の表と同じ PDF に混ざっていても両方読む。同じ手順は表を使う）。読む言い回し：Climb (via) RWY HDG to／until、Climb direct to、turn right/left (HDG nnn°) to intercept and proceed via、via STN Rnnn to X／to D.D DME／until crossing、via STN D.D DME (counter)clockwise ARC to X／to intercept、From over X、Cross … at or above／below／at／between（「cross」の省略も）。「...」でつながる2本の滑走路の共通部分もつなぐ。読めない文は確認画面に原文と一緒に出す
+- フィックスの位置：図の中の定義（「TAIYO／R081/D26.0 HUC」、「GOPVU／D32.5 HUC」＋その点へ向かうラジアル）→ 同じ飛行場の他の PDF の座標表 → 登録済みの地点（国土交通省の NAV データ）。どれにも無い局・フィックスは確認画面で警告
+- 文章に無い値の既定値（設定・AIP の PDF）：上昇勾配 3.3%（「RWY03L : 4.4% climb gradient」の注記があればそれ）、旋回 250KIAS・バンク 25°。補った手順は確認画面に表示
+- 局へ向かうラジアル（行き先が局）は局へ向かう向き。それ以外の文章のラジアルは向き「自動」（DME が今より近ければ局へ向かう、交点は交わる方）。エディターでも「外向き／局へ向かう／自動」
+- 「Climb RWY HDG」は滑走路の向き（AIP の真方位）のまま持つ（針路の欄は空、RWY HDG と表示）
+- TRANSITION はつながる SID の最後の進路を引き継いで始める（最初の「turn right HDG 146°」の旋回を描く）。開始フィックスには、前の段（SID → TRANSITION → STAR → APP）の同じ飛行場の手順で名前を付けたフィックスも使える（つながる手順が優先、登録済みの地点が先）
+- DME アーク：向きは CW（右回り）／CCW（左回り）。終点は「中心の局のラジアル」「別の NAVAID のラジアル（アークの向きに進んで最初に交わるところ）」「フィックス」
+- ラジアルのパーツに「局から終点まで点線」：局 → 終点を点線で描く（経路・距離・燃料には入れない）。ラジアルだけ
+- 手順の一覧：飛行場で絞り込み、「全部を表示／全部を非表示」のボタン（絞り込み中はその飛行場だけ）
+
 ## 9. 以降の予定
 - 0.2.4 以降：チャート（PDF・画像）重ね、TAC（ブルズアイ・Hook・BRAA・DOL・脅威円・JOKER）、SEAD/TOT/タイムライン、記録と再生（GPX＋イベント）、ブリーフィング画面

@@ -368,3 +368,6 @@ ul.warn { margin: 6px 0; padding-left: 18px; }
 .aip-review .warn.small { color: #fbbf24; }
 .aip-review .tag { font-size: 10px; border: 1px solid #f59e0b; color: #fbbf24; border-radius: 4px; padding: 0 4px; }
 .aip-review details summary { cursor: pointer; padding: 4px 0; }
+/* 0.2.6 ラジアルの点線（局 → 終点の DME。経路ではない見た目の補助） */
+#overlay .proc-guide { fill: none; stroke: var(--pc); stroke-width: 1; stroke-dasharray: 2 4; opacity: 0.8; }
+label.chk { display: flex; align-items: center; gap: 4px; font-size: 12px; }

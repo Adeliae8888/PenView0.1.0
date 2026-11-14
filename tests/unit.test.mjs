@@ -629,3 +629,117 @@ test('ルートの TRANSITION：選んだ SID に属するものだけ選べる�
   assert.equal(r.procs.SID_TR, null, '別の SID に変えたら TRANSITION は外れる');
   assert.deepEqual(r.points.map((p) => p.mark ? `${p.mark}:${p.name}` : p.id), ['dep', 'SID:GOT', 'mid', 'dst']);
 });
+
+/* ==== 0.2.6 ==== */
+test('DME アーク：終点を別の NAVAID のラジアルで（CW は東、CCW は西の交点）', () => {
+  // 局 X は HUC の真東 40nm、偏差 0。X の R-270（真方位 270）は HUC を通る東西の線 → HUC 20DME の円と、真東・真西の 2 点で交わる
+  const X = { name: 'XXX', ...destination(ST.HUC, 90, 40), dec: 0 };
+  const ctx = { ...PCTX, findPoint: (n) => (String(n).toUpperCase() === 'XXX' ? X : PCTX.findPoint(n)) };
+  const north = destination(ST.HUC, 0, 20);
+  const arc = (dir) => buildProcedure({ id: 'a', type: 'STAR', ad: 'RJAH', startFix: 'N20', parts: [
+    { id: 'p', type: 'arc', station: 'HUC', dme: 20, dir, endBy: 'other', xStation: 'XXX', xRadial: 270 }] }, { ...ctx, resolvePoint: () => north });
+  // 大圏なので交点は真東・真西から少しずれる → 「円の上」「X から見て真方位 270 の上」「CW は東側・CCW は西側」「弧の長さ＝半径×中心角」で確かめる
+  for (const [dir, east] of [['R', true], ['L', false]]) {
+    const r = arc(dir);
+    assert.deepEqual(r.warnings, []);
+    const e = r.fixes[0];
+    near(distanceNm(ST.HUC, e), 20, 0.01, '円の上');
+    near(bearingTrue(X, e), 270, 0.05, 'X の R-270 の上');
+    const b = bearingTrue(ST.HUC, e);
+    assert.equal(b > 0 && b < 180, east, east ? 'CW は東側' : 'CCW は西側');
+    const sweep = east ? b : 360 - b;
+    near(e.pathNm, 20 * sweep * Math.PI / 180, 0.02, '弧の長さ');
+  }
+});
+
+test('TRANSITION の開始フィックスに、SID で名前を付けたフィックス（GOPVU）を使える。登録済みの地点が先', () => {
+  const sid = { id: 'g1', type: 'SID', ad: 'RJAH', rwy: '03', parts: [
+    { id: 'a', type: 'radial', station: 'HUC', radial: 47, inbound: false, end: { type: 'dme', dist: 32.5 }, name: 'GOPVU' }] };
+  const tr = { id: 'd1', type: 'TRANSITION', ad: 'RJAH', startFix: 'GOPVU', parents: ['g1'], parts: [{ id: 't', type: 'tf', to: 'GOT' }] };
+  const ctx = { ...PCTX, relatedFixes: (p) => (p.type === 'TRANSITION' ? Object.fromEntries(buildProcedure(sid, PCTX).fixes.map((f) => [f.name, { lat: f.lat, lon: f.lon }])) : {}) };
+  const r = buildProcedure(tr, ctx);
+  assert.deepEqual(r.warnings, []);
+  near(distanceNm(ST.HUC, r.start), 32.5, 0.01, 'GOPVU＝HUC D32.5');
+  assert.equal(buildProcedure(tr, PCTX).warnings.length > 0, true, '関係する手順を引かなければ見つからない');
+  // 同じ名前が登録済みの地点にあれば、そちらを使う
+  const r2 = buildProcedure({ ...tr, startFix: 'GOT', parts: [{ id: 't', type: 'tf', to: 'MENOU' }] }, { ...ctx, relatedFixes: () => ({ GOT: { lat: 0, lon: 0 } }) });
+  near(distanceNm(ST.GOT, r2.start), 0, 1e-9, '登録済みの GOT');
+});
+
+import { runwayClauses, textToProcs, narrativeBlocks } from '../js/aip-text.js';
+
+const textPage = (lines) => { const items = lines.map(([s, x, y]) => it(s, x, y, s.length * 4)); return pageOf(items); };
+
+test('従来型の文章：滑走路ごとに分け、「...」の共通の続きをつなぐ', () => {
+  const c = runwayClauses('RWY03R/03L : Climb RWY HDG to 600FT, turn right,... RWY21R/21L : Climb RWY HDG to 600FT, turn left HDG 002°... ...to intercept and proceed via HUC R047 to GOPVU. Cross HUC R047/8.0DME at or below 8000FT, GOPVU at or below 10000FT.');
+  assert.deepEqual(c.map((x) => x.rwys), [['03R', '03L'], ['21R', '21L']]);
+  assert.match(c[0].text, /^Climb RWY HDG to 600FT, turn right, +to intercept and proceed via HUC R047 to GOPVU\. Cross/);
+  assert.match(c[1].text, /turn left HDG 002° to intercept and proceed via HUC R047 to GOPVU/);
+});
+
+test('従来型の文章 → 手順：GOPVU ONE（RWY21）・DAIGO TRANSITION・CHOSHI TRANSITION・DAIGO 1 ARRIVAL', () => {
+  const sid = textToProcs([textPage([
+    ['GOPVU ONE DEPARTURE', 100, 130],
+    ['RWY03R/03L : Climb RWY HDG to 600FT, turn right,...', 109, 145],
+    ['RWY21R/21L : Climb RWY HDG to 600FT, turn left HDG 002°...', 109, 159],
+    ['...to intercept and proceed via HUC R047 to GOPVU.', 194, 173],
+    ['Cross HUC R047/8.0DME at or below 8000FT, GOPVU at or below 10000FT.', 194, 187],
+    ['RWY03R/03L : 4.4% climb gradient required up to 2000FT, due to airspace', 139, 230],
+    ['DAIGO TRANSITION', 109, 274],
+    ['From over GOPVU, via GOT R117 to GOT TACAN.', 117, 289],
+    ['Cross GOT R117/10.5DME at or below 10000FT.', 117, 304],
+    ['CHOSHI TRANSITION', 108, 328],
+    ['From over OGITU, turn right HDG 146° to intercept and proceed via CVT R011', 117, 344],
+    ['to CVT VOR/DME.', 117, 357],
+    ['Cross CVT R011/46.0DME at or below 13000FT, cross CVT R011/29.4DME at or above FL170.', 117, 370],
+  ])], { icao: 'RJAH', side: 'SID', defaults: { grad: 3.3, kias: 250, bank: 25 } });
+  const r21 = sid.find((p) => p.id === 'aip-RJAH-SID-GOPVU1-21R');
+  assert.deepEqual(r21.warnings, []);
+  assert.deepEqual(r21.parts.map((p) => [p.type, p.hdg ?? p.radial ?? p.to, p.end?.type, p.end?.alt ?? p.end?.dist ?? p.end?.to, p.alt?.type, p.alt?.v]), [
+    ['heading', undefined, 'alt', 600, undefined, undefined],   // 針路は RWY HDG（null）
+    ['turnhdg', 2, 'fix', 'HUC R-047', undefined, undefined],
+    ['radial', 47, 'dme', 8, 'below', 8000],
+    ['tf', 'GOPVU', undefined, undefined, 'below', 10000],
+  ]);
+  assert.equal(r21.parts[0].rwyHdg, true);
+  assert.equal(r21.parts[1].dir, 'L');
+  assert.equal(sid.find((p) => p.id === 'aip-RJAH-SID-GOPVU1-03R').parts[0].end.grad, 4.4, '上昇勾配の注記');
+  const daigo = sid.find((p) => p.name === 'DAIGO');
+  assert.equal(daigo.type, 'TRANSITION');
+  assert.equal(daigo.startFix, 'GOPVU');
+  assert.deepEqual(daigo.parts.map((p) => [p.type, p.end?.dist ?? p.to, p.alt?.v, p.inbound]), [['radial', 10.5, 10000, true], ['tf', 'GOT', undefined, undefined]]);
+  const choshi = sid.find((p) => p.name === 'CHOSHI');
+  // CVT（局）へ向かうラジアル：DME の制限は遠い順（46.0 → 29.4）に、局へ向かう向きで分ける
+  assert.deepEqual(choshi.parts.map((p) => [p.type, p.end?.dist ?? p.end?.to ?? p.to, p.alt?.type, p.alt?.v, p.inbound]), [
+    ['turnhdg', 'CVT R-011', undefined, undefined, undefined], ['radial', 46, 'below', 13000, true], ['radial', 29.4, 'above', 17000, true], ['tf', 'CVT', undefined, undefined, undefined]]);
+  // 近い順に書かれていても同じ並び（遠い順）
+  const choshi2 = textToProcs([textPage([['CHOSHI TRANSITION', 108, 328], ['From over OGITU, turn right HDG 146° to intercept and proceed via CVT R011 to CVT VOR/DME.', 117, 344],
+    ['Cross CVT R011/29.4DME at or above FL170, cross CVT R011/46.0DME at or below 13000FT.', 117, 357]])], { icao: 'RJAH', side: 'SID' })[0];
+  assert.deepEqual(choshi2.parts.map((p) => p.end?.dist ?? p.end?.to ?? p.to), ['CVT R-011', 46, 29.4, 'CVT']);
+  linkTransitions(sid, []);
+  assert.deepEqual(daigo.parents.sort(), ['aip-RJAH-SID-GOPVU1-03L', 'aip-RJAH-SID-GOPVU1-03R', 'aip-RJAH-SID-GOPVU1-21L', 'aip-RJAH-SID-GOPVU1-21R']);
+  const star = textToProcs([textPage([
+    ['DAIGO 1 ARRIVAL', 123, 155],
+    ['From over GOT TACAN, proceed via GOT R132 to UGSIX, via HUC 26.0DME', 123, 170],
+    ['clockwise ARC to TAIYO.', 123, 185],
+    ['Cross TAIYO at or above 3000FT.', 123, 200],
+  ])], { icao: 'RJAH', side: 'STAR' })[0];
+  assert.equal(star.name, 'DAIGO1');
+  assert.equal(star.startFix, 'GOT');
+  assert.deepEqual(star.parts.map((p) => [p.type, p.to ?? p.xFix, p.dir, p.alt?.v]), [['tf', 'UGSIX', undefined, undefined], ['arc', 'TAIYO', 'R', 3000]]);
+  // 読めない文は警告に残す
+  const odd = textToProcs([textPage([['X ONE DEPARTURE', 100, 100], ['RWY03 : Climb RWY HDG to 600FT, fly the moon, direct to GOT.', 100, 115]])], { icao: 'RJAH' })[0];
+  assert.deepEqual(odd.warnings, ['読めない文：「fly the moon」']);
+  assert.deepEqual(odd.parts.map((p) => p.to ?? p.type), ['heading', 'GOT']);
+});
+
+test('ラジアルの向き「自動」：今の距離より近い DME へは局へ向かう、遠い DME へは外向き', () => {
+  const from = destination(ST.HUC, 40 - 7, 21.9);              // HUC R040（磁）上の 21.9DME（偏差 -7）
+  const run = (dist) => buildProcedure({ id: 'x', type: 'STAR', ad: 'RJAH', startFix: 'P', parts: [
+    { id: 'r', type: 'radial', station: 'HUC', radial: 40, inbound: 'auto', end: { type: 'dme', dist } }] }, { ...PCTX, resolvePoint: () => from });
+  const near19 = run(19).fixes[0];
+  const far30 = run(30).fixes[0];
+  near(distanceNm(ST.HUC, near19), 19, 0.01, '19DME');
+  near(distanceNm(from, near19), 2.9, 0.02, '局へ向かって 2.9nm');
+  near(distanceNm(from, far30), 8.1, 0.02, '外向きに 8.1nm');
+});

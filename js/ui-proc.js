@@ -30,11 +30,19 @@ function sel(path, label, value, options) {
 function partFields(pt, base) {
   if (pt.type === 'tf') return fld(`${base}.to`, '→ フィックス', pt.to, { type: 'text', fix: true, grow: true, ph: 'MENOU / HUC R-300 / GOT R-210 / HUC R-270 D15' });
   if (pt.type === 'arc') {
+    const other = pt.endBy === 'other';
+    let end = fld(`${base}.to`, '→ ラジアル', pt.to);
+    if (other) end = fld(`${base}.xStation`, '→ 局', pt.xStation, { type: 'text', fix: true, ph: 'GOT' }) + fld(`${base}.xRadial`, 'R-', pt.xRadial);
+    if (pt.endBy === 'fix') end = fld(`${base}.xFix`, '→ フィックス', pt.xFix, { type: 'text', fix: true, ph: 'TAIYO' });
     return fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.dme`, 'DME', pt.dme)
-      + fld(`${base}.to`, '→ ラジアル', pt.to) + sel(`${base}.dir`, '向き', pt.dir, { R: '右回り', L: '左回り' });
+      + sel(`${base}.dir`, '向き', pt.dir, { R: 'CW（右回り）', L: 'CCW（左回り）' })
+      + sel(`${base}.endBy`, '終点', pt.endBy || 'own', { own: '中心の局のラジアル', other: '別の NAVAID のラジアル', fix: 'フィックス' }) + end;
   }
-  let head = fld(`${base}.hdg`, '針路 °M', pt.hdg);
-  if (pt.type === 'radial') head = fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.radial`, 'R-', pt.radial) + sel(`${base}.inbound`, '', pt.inbound ? '1' : '', { '': '外向き', 1: '局へ向かう' });
+  let head = fld(`${base}.hdg`, '針路 °M', pt.hdg, pt.rwyHdg ? { ph: 'RWY HDG' } : {});
+  if (pt.type === 'radial') {
+    head = fld(`${base}.station`, '局', pt.station, { type: 'text', fix: true, ph: 'HUC' }) + fld(`${base}.radial`, 'R-', pt.radial) + sel(`${base}.inbound`, '', pt.inbound === 'auto' ? 'auto' : pt.inbound ? '1' : '0', { 0: '外向き', 1: '局へ向かう', auto: '自動' })
+      + `<label class="chk"><input type="checkbox" data-pp="${base}.guide" ${pt.guide ? 'checked' : ''}/> 局から終点まで点線</label>`;
+  }
   if (pt.type === 'turnhdg') head = sel(`${base}.dir`, '旋回', pt.dir, { L: '左旋回', R: '右旋回' }) + head;
   const e = pt.end || {};
   const endSel = sel(`${base}.end.type`, '終わり', e.type, { dme: 'DME', fix: 'フィックス/ラジアル', alt: '高度' });
@@ -110,10 +118,23 @@ export function renderProcTab(el) {
     <datalist id="procSuggest"></datalist>`;
 }
 
+let listAd = '';                          // 一覧の飛行場の絞り込み（'' ＝全部）
+
+/* ==== listedProcs ==== 絞り込み後の一覧 */
+function listedProcs() {
+  return procedures().filter((p) => !listAd || p.ad === listAd);
+}
+
+/* ==== listHtml ==== 一覧：飛行場で絞り込み、表示の全選択／全解除（絞り込み中はその飛行場だけ） */
 function listHtml() {
-  const rows = procedures().map((p) => `<tr><td><input type="checkbox" data-pvis="${p.id}" ${p.visible !== false ? 'checked' : ''}/></td>
+  const list = listedProcs();
+  const ads = [...new Set(procedures().map((p) => p.ad).filter(Boolean))].sort();
+  const anyOn = list.some((p) => p.visible !== false);
+  const filter = `<label>飛行場<select data-pfilter><option value="">全部（${procedures().length}）</option>${ads.map((a) => `<option value="${esc(a)}" ${a === listAd ? 'selected' : ''}>${esc(a)}（${procedures().filter((p) => p.ad === a).length}）</option>`).join('')}</select></label>`;
+  const toggle = list.length ? `<button type="button" class="btn" data-pr="visall">${anyOn ? '全部を非表示' : '全部を表示'}</button>` : '';
+  const rows = list.map((p) => `<tr><td><input type="checkbox" data-pvis="${p.id}" ${p.visible !== false ? 'checked' : ''}/></td>
     <td class="pick" data-pr="edit" data-id="${p.id}"><b>${esc(procLabel(p))}</b></td><td><button type="button" class="btn sm danger" data-pr="del" data-id="${p.id}">×</button></td></tr>`).join('');
-  return `<div class="row"><button type="button" class="btn primary" data-pr="new">新規の手順</button></div>
+  return `<div class="row wrap"><button type="button" class="btn primary" data-pr="new">新規の手順</button>${filter}${toggle}</div>
     <table class="pts">${rows || '<tr><td class="muted">まだありません</td></tr>'}</table><p class="muted">手順は NAV モードで表示。書き出し・読込は設定から。</p>`;
 }
 
@@ -123,7 +144,7 @@ function setPath(obj, path, raw, isNum) {
   const last = keys.pop();
   const target = keys.reduce((o, k) => (o[k] ??= {}), obj);
   let v = raw;
-  if (last === 'inbound') v = raw === '1';
+  if (last === 'inbound') v = raw === 'auto' ? 'auto' : raw === '1';
   else if (last === 'visible') v = raw;
   else if (isNum) v = raw === '' ? null : Number(raw);
   else if (['ad', 'to', 'station', 'startFix', 'name', 'derText'].includes(last) && typeof raw === 'string') v = raw.toUpperCase();
@@ -146,7 +167,8 @@ export function bindProcTab(el, rerender) {
   });
   el.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.dataset.pvis) { const p = findProcedure(t.dataset.pvis); if (p) { p.visible = t.checked; saveProcedures(); emit('proc'); } return; }
+    if (t.dataset.pvis) { const p = findProcedure(t.dataset.pvis); if (p) { p.visible = t.checked; saveProcedures(); emit('proc'); rerender(); } return; }
+    if (t.hasAttribute('data-pfilter')) { listAd = t.value; rerender(); return; }
     const p = findProcedure(editingId);
     if (p && t.dataset.parent) {
       const set = new Set(p.parents || []);
@@ -173,7 +195,14 @@ export function bindProcTab(el, rerender) {
 
 function handleClick(b) {
   const act = b.dataset.pr;
-  if (act === 'new') editingId = newProcedure('', 'SID').id;
+  if (act === 'new') editingId = newProcedure(listAd, 'SID').id;
+  if (act === 'visall') {
+    const list = listedProcs();
+    const on = !list.some((p) => p.visible !== false);
+    list.forEach((p) => { p.visible = on; });
+    saveProcedures();
+    emit('proc');
+  }
   if (act === 'edit') editingId = b.dataset.id;
   if (act === 'back') editingId = null;
   if (act === 'del' && confirm('この手順を削除しますか？')) removeProcedure(b.dataset.id);

@@ -6,6 +6,7 @@ import path from 'path';
 import { pdfPages } from '../js/pdf-text.js';
 import { parseAd2, findTables, waypointTable, tablesToProcs, linkTransitions } from '../js/aip-parse.js';
 import { distanceNm } from '../js/geo.js';
+import { textToProcs } from '../js/aip-text.js';
 
 const [pdfjsPath, dir] = process.argv.slice(2);
 const pdfjs = await import(pdfjsPath);
@@ -37,11 +38,15 @@ for (const f of files.filter((x) => /__(SID|STAR)/.test(path.basename(x)))) {
     if (['TF', 'DF', 'IF', 'CF'].includes(l.path) && !l.wpt) out.problems.push(`${b} ${x.title} ${l.serial}：名前なし`);
     if (l.wpt && !w[l.wpt]) out.problems.push(`${b} ${l.wpt}：座標なし`);
   }));
-  procs.push(...tablesToProcs(pages, { icao: b.slice(0, 4), side: /__STAR/.test(b) ? 'STAR' : 'SID', source: { file: b } }));
+  const opts = { icao: b.slice(0, 4), side: /__STAR/.test(b) ? 'STAR' : 'SID', source: { file: b } };
+  const fromTable = tablesToProcs(pages, opts);
+  procs.push(...fromTable, ...textToProcs(pages, opts).filter((p) => !fromTable.some((q) => q.id === p.id || q.name === p.name)));
 }
 linkTransitions(procs);
 const count = {};
 procs.forEach((p) => { count[p.type] = (count[p.type] || 0) + 1; });
 console.log(out.ad2.join('\n'));
-console.log(`表 ${tables}・レグ ${legs}・手順`, count, `TRANSITION の親なし ${procs.filter((p) => p.type === 'TRANSITION' && !p.parents.length).length}`);
+const orphans = procs.filter((p) => p.type === 'TRANSITION' && !p.parents.length).map((p) => `${p.ad} ${p.name}`);
+const unread = procs.filter((p) => p.warnings?.some((w) => /読めない文/.test(w))).length;
+console.log(`表 ${tables}・レグ ${legs}・手順（RNAV＋従来型）`, count, `読めない文のある手順 ${unread}・TRANSITION の親なし ${orphans.length}${orphans.length ? `（${orphans.join('、')}）` : ''}`);
 console.log(out.problems.length ? `problems:\n${out.problems.join('\n')}` : 'problems: none');

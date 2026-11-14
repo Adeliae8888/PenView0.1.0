@@ -192,7 +192,7 @@ function wireEvents() {
   on('own', (own) => { onOwnUpdate(own); applyOrientation(); renderDataPanel(); requestDraw(); });
   on('route', () => { bumpProcContext(); syncProcRoutes(); renderDataPanel(); renderNavOverlays(); renderTab(); refreshNavGeo(); requestDraw(); });
   on('navdata', () => { refreshCatalog(); refreshNavGeo(true); if (syncProcRoutes()) emit('route'); requestDraw(); });
-  on('proc', () => { if (syncProcRoutes()) emit('route'); requestDraw(); });   // 手順の作図を直したら、それを使うルートの点も直す
+  on('proc', () => { bumpProcContext(); if (syncProcRoutes()) emit('route'); requestDraw(); });   // 手順の作図を直したら、それを使う手順（TRANSITION 等）・ルートの点も直す
   on('toEditor', (text) => { if (fillFromMap(text)) openSheet('proc'); });
   bindLabelDrag($('map'), requestDraw);
   $('compass').addEventListener('click', () => updateSettings({ follow: false, orient: 'north' }));

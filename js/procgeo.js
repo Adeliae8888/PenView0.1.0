@@ -121,16 +121,17 @@ function legEnd(from, courseTrue, end, ctx, cur, ownStation) {
     return { p: destination(from, courseTrue, d), alt: Number(end.alt) };
   }
   if (end.type === 'dme') {
-    const st = ctx.findPoint(end.station || ownStation);   // ラジアルのレグは自局の DME が既定
-    return st ? { p: rayCircle(from, courseTrue, st, Number(end.dist)) } : null;
+    const name = end.station || ownStation;
+    const st = ctx.findPoint(name);   // ラジアルのレグは自局の DME が既定
+    return st ? { p: rayCircle(from, courseTrue, st, Number(end.dist)) } : { error: `DME の局が見つかりません：${name || ''}` };
   }
   const rm = String(end.to || '').toUpperCase().trim().match(RADIAL_RE);
   if (rm) {
     const st = ctx.findPoint(rm[1]);
-    return st ? { p: intersectRays(from, courseTrue, st, radialTrue(st, rm[2])) } : null;
+    return st ? { p: intersectRays(from, courseTrue, st, radialTrue(st, rm[2])) } : { error: `局が見つかりません：${rm[1]}` };
   }
   const fx = resolveFix(end.to, ctx);
-  return fx ? { p: fx, name: fx.name } : null;
+  return fx ? { p: fx, name: fx.name } : { error: `フィックスが見つかりません：${end.to || ''}` };
 }
 
 /* ==== partGeometry ==== 1パーツ → 線（点列）・終点・出入りの真方位 */
@@ -147,12 +148,17 @@ function partGeometry(part, cur, ctx) {
     if (part.type === 'radial') {
       const st = ctx.findPoint(part.station);
       if (!st) return { error: `局が見つかりません：${part.station || ''}` };
+      if (part.inbound === 'auto') return autoRadial(part, cur, ctx, st);
       course = norm360(radialTrue(st, part.radial) + (part.inbound ? 180 : 0));
+    } else if (part.rwyHdg && (part.hdg === null || part.hdg === '' || part.hdg === undefined)) {
+      // 「Climb RWY HDG」：SID の最初は滑走路の向き（AIP の真方位）
+      if (!Number.isFinite(cur.c)) return { error: '滑走路の向きが分かりません（針路を入れてください）' };
+      course = cur.c;
     } else {
       course = toTrue(Number(part.hdg), gsiVariation(from.lat, from.lon) ?? 0);
     }
     const e = legEnd(from, course, part.end, ctx, cur, part.type === 'radial' ? part.station : null);
-    if (!e?.p) return { error: '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
+    if (!e?.p) return { error: e?.error || '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
     return { pts: [from, e.p], end: e.p, endName: e.name || '', endAlt: e.alt, c0: course, c1: course };
   }
   if (part.type === 'arc') return arcGeometry(part, from, ctx);
@@ -164,9 +170,14 @@ function partGeometry(part, cur, ctx) {
  * 180° を超える旋回・ティアドロップも描ける。半径は part.turn（速度・バンク、または半径）。無ければ 250KIAS・25°。高度で終わるときは旋回中の上昇も数える */
 function turnHeadingGeometry(part, cur, ctx) {
   const from = cur.p;
-  if (!Number.isFinite(cur.c)) return { error: '旋回の前の進路が決まりません（最初のパーツには使えません）' };
   if (!Number.isFinite(Number(part.hdg)) || part.hdg === null || part.hdg === '') return { error: '針路を入れてください' };
   const hdg = toTrue(Number(part.hdg), gsiVariation(from.lat, from.lon) ?? 0);
+  if (!Number.isFinite(cur.c)) {
+    // 旋回の前の進路が分からない（TRANSITION・STAR の最初など）：旋回は描かず、その針路でまっすぐ
+    const e0 = legEnd(from, hdg, part.end, ctx, cur, null);
+    if (!e0?.p) return { error: e0?.error || '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
+    return { pts: [from, e0.p], end: e0.p, endName: e0.name || '', endAlt: e0.alt, c0: hdg, c1: hdg, p1: from, radius: 0 };
+  }
   const right = (part.dir || 'R') === 'R';
   const t = part.turn?.mode ? { ...part.turn, alt: part.turn.alt || cur.alt } : { mode: 'perf', kias: DEFAULT_TURN_KIAS, alt: cur.alt };
   const r = turnRadiusNm(t);
@@ -180,7 +191,7 @@ function turnHeadingGeometry(part, cur, ctx) {
   const arcNm = r * sweep * RAD;
   const climbed = part.end?.type === 'alt' ? arcNm * gradientFtPerNm(part.end.grad) : 0;
   const e = legEnd(p1, hdg, part.end, ctx, { ...cur, alt: cur.alt + climbed }, null);
-  if (!e?.p) return { error: '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
+  if (!e?.p) return { error: e?.error || '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
   return { pts: [...arc, e.p], end: e.p, endName: e.name || '', endAlt: e.alt, c0: cur.c, c1: hdg, p1, radius: r };
 }
 
@@ -190,13 +201,63 @@ function arcGeometry(part, from, ctx) {
   if (!st) return { error: `局が見つかりません：${part.station || ''}` };
   const r = Number(part.dme) || distanceNm(st, from);
   const startB = bearingTrue(st, from);
-  const endB = radialTrue(st, part.to);
   const cw = (part.dir || 'R') === 'R';
-  const sweep = cw ? norm360(endB - startB) : norm360(startB - endB);
+  let sweep;
+  if (part.endBy === 'fix') {
+    // 終点＝フィックス（「ARC to TAIYO」）：局から見たフィックスの方位まで
+    const fx = resolveFix(part.xFix, ctx);
+    if (!fx) return { error: `終点のフィックスが見つかりません：${part.xFix || ''}` };
+    const b = bearingTrue(st, fx);
+    sweep = cw ? norm360(b - startB) : norm360(startB - b);
+  } else if (part.endBy === 'other') {
+    // 終点＝別の NAVAID のラジアルとアークの交点（アークの向きに進んで最初に交わるところ）
+    const x = ctx.findPoint(part.xStation);
+    if (!x) return { error: `終点の局が見つかりません：${part.xStation || ''}` };
+    sweep = arcCrossing(st, r, startB, cw, x, radialTrue(x, part.xRadial));
+    if (sweep === null) return { error: `アークが ${part.xStation} R-${part.xRadial} と交わりません` };
+  } else {
+    const endB = radialTrue(st, part.to);
+    sweep = cw ? norm360(endB - startB) : norm360(startB - endB);
+  }
+  const endB = startB + (cw ? sweep : -sweep);
   const n = Math.max(1, Math.ceil(sweep / ARC_STEP_DEG));
   const pts = Array.from({ length: n + 1 }, (_, i) => destination(st, startB + (cw ? 1 : -1) * (sweep * i) / n, r));
   const tangent = (b) => norm360(b + (cw ? 90 : -90));
   return { pts, end: pts.at(-1), endName: `${part.station} ${Math.round(r)}DME`, c0: tangent(startB), c1: tangent(endB), arc: true, radius: r };
+}
+
+/* ==== autoRadial ==== 向き「自動」のラジアル（AIP の文章から）：外向き・局へ向かうの両方を試し、終点が決まる方（両方なら近い方）
+ * DME で終わるときは、今の距離より近ければ局へ向かう */
+function autoRadial(part, cur, ctx, st) {
+  const from = cur.p;
+  const out = radialTrue(st, part.radial);
+  const own = !part.end?.station || part.end.station === part.station;
+  let order = [out, norm360(out + 180)];
+  if (part.end?.type === 'dme' && own) order = Number(part.end.dist) < distanceNm(from, st) ? [order[1]] : [order[0]];
+  const tries = order.map((c) => ({ c, e: legEnd(from, c, part.end, ctx, cur, part.station) })).filter((t) => t.e?.p);
+  if (!tries.length) return { error: '終わりの条件で点が決まりません（交わらない・遠すぎる）' };
+  const best = tries.sort((a, b) => distanceNm(from, a.e.p) - distanceNm(from, b.e.p))[0];
+  return { pts: [from, best.e.p], end: best.e.p, endName: best.e.name || '', endAlt: best.e.alt, c0: best.c, c1: best.c };
+}
+
+/* ==== arcCrossing ==== 局 st・半径 r の円を startB から向き cw に回るとき、局 x のラジアル（真方位 xb）を最初に横切る角度（度）。無ければ null
+ * x から見た方位とラジアルの差が符号を変え、かつラジアルの前方（差が 90° 未満）のところ */
+export function arcCrossing(st, r, startB, cw, x, xb) {
+  const side = (deg) => {
+    const p = destination(st, startB + (cw ? deg : -deg), r);
+    return ((bearingTrue(x, p) - xb + 540) % 360) - 180;
+  };
+  let prev = side(0);
+  for (let d = 0.5; d <= 359.5; d += 0.5) {
+    const cur = side(d);
+    if (Math.sign(cur) !== Math.sign(prev) && Math.abs(cur) < 90 && Math.abs(prev) < 90) {
+      let [a, b] = [d - 0.5, d];
+      for (let i = 0; i < 40; i += 1) { const m = (a + b) / 2; if (Math.sign(side(m)) === Math.sign(side(a))) a = m; else b = m; }
+      return (a + b) / 2;
+    }
+    prev = cur;
+  }
+  return null;
 }
 
 /* ==== filletTurn ==== 前の直線と今の直線の角を半径 r の弧でつなぐ（fly-by）。prev.pts の最後と cur.pts の最初を切り詰める */
@@ -228,7 +289,7 @@ function courseLabel(part, g) {
   const crs = String(mag || 360).padStart(3, '0');
   if (part.type === 'arc') return `${Math.round(g.radius)}DME ARC ${part.station}`;
   if (part.type === 'radial') return `${part.station} R-${String(Math.round(Number(part.radial)) % 360).padStart(3, '0')} ${dist.toFixed(1)}`;
-  if (part.type === 'heading') return `HDG ${String(Math.round(Number(part.hdg)) % 360 || 360).padStart(3, '0')}° ${dist.toFixed(1)}`;
+  if (part.type === 'heading') return part.rwyHdg && !Number.isFinite(Number(part.hdg ?? NaN)) ? `RWY HDG ${dist.toFixed(1)}` : `HDG ${String(Math.round(Number(part.hdg)) % 360 || 360).padStart(3, '0')}° ${dist.toFixed(1)}`;
   if (part.type === 'turnhdg') return `${part.dir === 'L' ? 'L' : 'R'} TURN HDG ${String(Math.round(Number(part.hdg)) % 360 || 360).padStart(3, '0')}° ${distanceNm(g.p1, b).toFixed(1)}`;
   return `${crs}° ${dist.toFixed(1)}`;
 }
@@ -246,6 +307,11 @@ function buildLegs(parts, start, ctx, out, dashed) {
     if (turn?.arc) out.segments.push({ pts: turn.arc, dashed, turn: true });
     const seg = { pts: g.pts, dashed, partId: part.id };
     out.segments.push(seg);
+    // ラジアルの「局から終点まで点線」：見た目の補助（経路・距離には入れない）
+    if (part.type === 'radial' && part.guide) {
+      const st = ctx.findPoint(part.station);
+      if (st) (out.guides ||= []).push([st, g.end]);
+    }
     if (part.alt?.v || part.alt?.type === 'between') cur.alt = Number(part.alt.v) || cur.alt;
     if (Number.isFinite(g.endAlt)) cur.alt = g.endAlt;
     const mid = g.pts[Math.floor(g.pts.length / 2)];
@@ -265,12 +331,21 @@ export function findRunway(ad, d) {
   return ad.rwy.find((r) => r.d === d) || ad.rwy.find((r) => r.d.slice(0, 2) === String(d).slice(0, 2)) || null;
 }
 
-/* ==== localCtx ==== 手順に付いたウェイポイント（AIP から取り込んだ座標 proc.wpts）を先に引く */
+/* ==== localCtx ==== 地点の引き方：手順に付いたウェイポイント（AIP の座標 proc.wpts）→ 登録済みの地点 → 前の段の手順（SID 等）で名前を付けたフィックス
+ * ctx.relatedFixes(proc) が { NAME: {lat, lon} } を返す（TRANSITION の開始に、自作 SID の「GOPVU」などを使えるように） */
 function localCtx(proc, ctx) {
-  const w = proc.wpts;
-  if (!w || !Object.keys(w).length) return ctx;
-  const own = (n) => { const k = String(n || '').toUpperCase().trim(); return w[k] ? { name: k, ...w[k] } : null; };
-  return { ...ctx, findPoint: (n) => own(n) || ctx.findPoint(n), resolvePoint: (t) => own(t) || ctx.resolvePoint(t) };
+  const w = proc.wpts || {};
+  const defs = proc.fixDefs || {};
+  const rel = ctx.relatedFixes?.(proc) || {};
+  if (!Object.keys(w).length && !Object.keys(rel).length && !Object.keys(defs).length) return ctx;
+  const pick = (map, n) => { const k = String(n || '').toUpperCase().trim(); return map[k] ? { name: k, ...map[k] } : null; };
+  // チャートの図の定義（「GOPVU＝HUC R-047 D32.5」）：登録済みの地点に無いときに使う
+  const def = (n) => { const k = String(n || '').toUpperCase().trim(); const p = defs[k] && resolveFix(defs[k], ctx); return p ? { ...p, name: k } : null; };
+  return {
+    ...ctx,
+    findPoint: (n) => pick(w, n) || ctx.findPoint(n) || def(n) || pick(rel, n),
+    resolvePoint: (t) => pick(w, t) || ctx.resolvePoint(t) || def(t) || pick(rel, t),
+  };
 }
 
 /* ==== buildProcedure ==== 手順 → { segments:[{pts, dashed, turn}], labels:[…], fixes:[…], start, warnings }
@@ -291,8 +366,10 @@ export function buildProcedure(proc, ctx) {
     if (s.estimated) out.warnings.push(`RWY${rwy.d} の滑走路端は推定値です（AIP AD 2.12 の座標で直せます）`);
   } else {
     const fx = resolveFix(proc.startFix, ctx);
-    if (!fx) { out.warnings.push('開始フィックスを入れてください'); return out; }
-    start = { p: fx, alt: Number(proc.startAlt) || 0, c: null };
+    if (!fx) { out.warnings.push(proc.startFix ? `開始フィックスが見つかりません：${proc.startFix}` : '開始フィックスを入れてください'); return out; }
+    // TRANSITION・STAR は、つながる手順の最後の進路を引き継ぐ（最初の「turn right HDG 146°」の旋回を描くため）
+    const inC = ctx.inboundCourse?.(proc);
+    start = { p: fx, alt: Number(proc.startAlt) || 0, c: Number.isFinite(inC) ? inC : null };
     out.start = { ...fx, name: fx.name || proc.startFix };
   }
   const main = buildLegs(proc.parts || [], start, ctx, out, false);

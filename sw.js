@@ -10,7 +10,7 @@ const APP_SHELL = [
   './js/keypad.js', './js/ui-nav.js', './js/ui-route.js', './js/ui-data.js',
   './js/zip.js', './js/kml.js', './js/navdata.js', './js/nav-render.js', './js/ui-settings-data.js',
   './js/procgeo.js', './js/procedures.js', './js/proc-render.js', './js/proc-wire.js', './js/ui-proc.js', './js/android.js', './js/route-proc.js',
-  './js/pdf-text.js', './js/aip-parse.js', './js/aip-import.js', './js/ui-aip.js', './vendor/pdfjs/pdf.min.mjs', './vendor/pdfjs/pdf.worker.min.mjs',
+  './js/pdf-text.js', './js/aip-parse.js', './js/aip-import.js', './js/ui-aip.js', './js/aip-text.js', './vendor/pdfjs/pdf.min.mjs', './vendor/pdfjs/pdf.worker.min.mjs',
   './data/land.json', './data/airspace.json', './data/airports.json', './data/navaids.json', './data/obstacles.json',
   './icons/icon-192.png', './icons/icon-512.png',
 ];

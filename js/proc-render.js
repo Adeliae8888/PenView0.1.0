@@ -73,7 +73,8 @@ export function drawProcedures(view, procs, ctx, editingId, activePartId = null,
   return procs.map((proc) => {
     const r = built(proc, ctx);
     const cls = `proc${proc.id === editingId ? ' editing' : ''}${onRoute.has(proc.id) ? ' on-route' : ''} proc-${proc.type.toLowerCase()}`;
-    let out = r.segments.map((sg) => `<path class="proc-line${sg.dashed ? ' missed' : ''}${sg.turn ? ' turn' : ''}${activePartId && sg.partId === activePartId ? ' active' : ''}" d="${polyline(view, sg.pts)}"/>`).join('');
+    let out = (r.guides || []).map((gd) => `<path class="proc-guide" d="${polyline(view, gd)}"/>`).join('');
+    out += r.segments.map((sg) => `<path class="proc-line${sg.dashed ? ' missed' : ''}${sg.turn ? ' turn' : ''}${activePartId && sg.partId === activePartId ? ' active' : ''}" d="${polyline(view, sg.pts)}"/>`).join('');
     r.fixes.forEach((f) => {
       if (isNamedFix(f.name)) { out += wptMark(view, f, !onRoute.has(proc.id)); return; }
       const p = view.geoToScreen(f.lat, f.lon);

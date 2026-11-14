@@ -36,6 +36,24 @@ await page.waitForTimeout(800);
 R.applied = await page.textContent('#aipStatus');
 R.stored = await mod('/js/procedures.js', `const l = m.procedures(); const c = {}; l.forEach(p => { c[p.type] = (c[p.type] || 0) + 1; }); return c;`);
 
+// 作図：取り込んだ手順を全部作図して、警告の無い本数（国土交通省の NAV データ無しの状態）
+R.build = await page.evaluate(async () => {
+  const [P, W] = await Promise.all([import('/js/procedures.js'), import('/js/proc-wire.js')]);
+  const out = { ok: 0, warn: 0, byType: {}, kinds: {}, sample: [] };
+  P.procedures().forEach((p) => {
+    const r = W.buildForTest(p);
+    const bad = r.warnings.filter((w) => !/推定値|として作図/.test(w));
+    if (bad.length) { out.warn += 1; const k = bad[0].replace(/^\d+：/, '').replace(/：.*$/, ''); out.kinds[k] = (out.kinds[k] || 0) + 1; if (/終わりの条件/.test(bad[0]) || out.sample.length < 6) out.sample.push(`${p.id}: ${bad[0]} ｜ ${(p.source?.text || '').slice(0, 150)}`); } else out.ok += 1;
+    out.byType[p.type] = (out.byType[p.type] || 0) + 1;
+  });
+  return out;
+});
+R.conv = await page.evaluate(async () => {
+  const P = await import('/js/procedures.js');
+  const g = P.procedures().find((p) => p.id === 'aip-RJAH-SID-GOPVU1-21R');
+  return g ? g.parts.map((q) => q.type).join(',') : null;
+});
+
 // 滑走路：AIP の L/R、SID の滑走路端は AIP の DER（推定の警告なし）
 R.sid = await page.evaluate(async () => {
   const [P, G, W] = await Promise.all([import('/js/procedures.js'), import('/js/procgeo.js'), import('/js/proc-wire.js')]);
@@ -45,6 +63,33 @@ R.sid = await page.evaluate(async () => {
 });
 await page.click('#settingsBtn').catch(() => {});
 await page.evaluate(() => document.getElementById('settingsSheet').classList.remove('open'));
+
+// 手順の一覧：飛行場で絞り込み、全部を表示／非表示（絞り込み中はその飛行場だけ）
+await page.click('#routeBtn');
+await page.click('[data-tab="proc"]');
+await page.selectOption('[data-pfilter]', 'RJAH');
+await page.waitForTimeout(200);
+const visCount = () => page.evaluate(async () => { const P = await import('/js/procedures.js'); const l = P.procedures(); return { rjah: l.filter((p) => p.ad === 'RJAH' && p.visible !== false).length, other: l.filter((p) => p.ad !== 'RJAH' && p.visible !== false).length, rows: document.querySelectorAll('[data-pvis]').length }; });
+R.list0 = await visCount();
+R.toggleLabel0 = await page.textContent('[data-pr="visall"]');
+await page.click('[data-pr="visall"]');
+await page.waitForTimeout(200);
+R.list1 = await visCount();
+R.toggleLabel1 = await page.textContent('[data-pr="visall"]');
+await page.click('[data-pr="visall"]');
+await page.waitForTimeout(200);
+R.list2 = await visCount();
+// ラジアルの「局から終点まで点線」：GOPVU1 RWY21R の HUC R047 のパーツ
+await page.click('[data-pr="edit"][data-id="aip-RJAH-SID-GOPVU1-21R"]');
+await page.waitForTimeout(200);
+R.editorRadial = await page.$$eval('.part-card', (c) => c.map((x) => x.querySelector('b').textContent));
+R.inboundOpts = await page.$$eval('select[data-pp="parts.2.inbound"] option', (o) => o.map((x) => x.textContent));
+await page.check('input[data-pp="parts.2.guide"]');
+await page.waitForTimeout(300);
+R.guideSaved = await mod('/js/procedures.js', `return m.procedures().find(p => p.id === 'aip-RJAH-SID-GOPVU1-21R').parts[2].guide`);
+R.guideDrawn = await page.evaluate(() => document.querySelectorAll('#overlay .proc-guide').length);
+await page.click('[data-pr="back"]');
+await page.click('[data-close="dataSheet"]');
 
 // ルート RJCC → RJCC：SID と、その SID の TRANSITION だけ選べる
 await page.click('#routeBtn');

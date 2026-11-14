@@ -5,10 +5,35 @@ import { drawProcedures } from './proc-render.js';
 import { findPoint, resolvePoint } from './points.js';
 import { setProcContext, editingProcId, moveLabel } from './ui-proc.js';
 import { saveProcedures, findProcedure } from './procedures.js';
-import { built } from './proc-render.js';
+import { built, isNamedFix } from './proc-render.js';
+import { bearingTrue } from './geo.js';
 import { routes, activeRoute, saveRoutes } from './route.js';
 import { syncRouteProcs, missedPoints } from './route-proc.js';
 import { aipRunways } from './aip-import.js';
+
+const STAGE = { SID: 0, TRANSITION: 1, STAR: 2, APP: 3 };
+
+/* ==== relatedFixes ==== 前の段（SID → TRANSITION → STAR → APP）の同じ飛行場の手順で名前を付けたフィックス。つながる手順（parents）が優先
+ * 前の段だけを見るので循環しない。SID は滑走路から始まるので無し */
+function relatedFixes(proc) {
+  const stage = STAGE[proc.type] ?? 0;
+  if (!stage) return {};
+  const pool = procedures().filter((q) => q.ad === proc.ad && q.id !== proc.id && (STAGE[q.type] ?? 9) < stage);
+  const parents = new Set(proc.parents || []);
+  const out = {};
+  [...pool.filter((q) => !parents.has(q.id)), ...pool.filter((q) => parents.has(q.id))].forEach((q) => {
+    built(q, ctx).fixes.forEach((f) => { if (!f.missed && isNamedFix(f.name)) out[f.name] = { lat: f.lat, lon: f.lon }; });
+  });
+  return out;
+}
+
+/* ==== inboundCourse ==== TRANSITION の開始の進路：つながる SID（の最初のもの）の最後の区間の向き。無ければ null */
+function inboundCourse(proc) {
+  if (proc.type !== 'TRANSITION') return null;
+  const parent = (proc.parents || []).map((id) => procedures().find((q) => q.id === id)).find((q) => q && q.type === 'SID');
+  const seg = parent && built(parent, ctx).segments.filter((s) => !s.dashed).at(-1);
+  return seg && seg.pts.length >= 2 ? bearingTrue(seg.pts.at(-2), seg.pts.at(-1)) : null;
+}
 
 /* ==== findAirport ==== 飛行場（OpenAIP）。AIP AD2 を読み込んだ飛行場は滑走路を AIP のもの（L/R・THR・DER・標高）に置き換え */
 function findAirport(icao) {
@@ -25,6 +50,8 @@ const ctx = {
   findPoint: (name) => findPoint(name),
   resolvePoint: (text) => resolvePoint(text),
   findAirport,
+  relatedFixes,
+  inboundCourse,
   get version() { return ctxVersion; },
 };
 setProcContext(ctx);
@@ -45,6 +72,11 @@ export function syncProcRoutes({ route = null, force = false } = {}) {
   });
   if (changed) saveRoutes();
   return changed;
+}
+
+/* ==== buildForTest ==== テスト用：アプリの地点データで作図 */
+export function buildForTest(proc) {
+  return build(proc);
 }
 
 /* ==== routeMissedPoints ==== アクティブルートの APP の進入復行の点 */
