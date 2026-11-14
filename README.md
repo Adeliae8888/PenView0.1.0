@@ -1,3 +1,3 @@
 # PenView
-Ver0.2.3
+Ver0.2.6
 
